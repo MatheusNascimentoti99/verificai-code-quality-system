@@ -963,6 +963,18 @@ async def analyze_selected_criteria(
         print(f"DEBUG: Is response empty? {not llm_response_content}")
         print("ZZZZZZZZZ END LLM SERVICE DEBUG ZZZZZZZZZ")
 
+        # Step 6.5: Save the raw response to a file for the "Last Response" tab
+        try:
+            from datetime import datetime
+            prompts_dir = Path(__file__).parent.parent.parent.parent / "prompts"
+            latest_response_path = prompts_dir / "latest_response.txt"
+            
+            with open(latest_response_path, "w", encoding="utf-8") as f:
+                f.write(llm_response_content)
+            print(f"DEBUG: Última resposta salva em: {latest_response_path}")
+        except Exception as save_error:
+            print(f"DEBUG: Erro ao salvar resposta em arquivo: {save_error}")
+
         # Check if response is empty
         if not llm_response_content:
             print("ERROR: LLM response is empty!")
@@ -970,60 +982,63 @@ async def analyze_selected_criteria(
         else:
             # Step 7: Extract content from LLM response
             print(f"=== RAW LLM RESPONSE FOR DEBUG ===")
-            print(f"Content type: {type(llm_response_content)}")
             print(f"Content length: {len(llm_response_content)}")
-            print(f"Content preview: {llm_response_content[:500]}")
             print(f"=== END RAW LLM RESPONSE ===")
 
-            # DEBUG: Test if response contains expected patterns
-            print(f"=== DEBUG RESPONSE PATTERNS ===")
-            print(f"Contains 'Critrio': {'Critrio' in llm_response_content}")
-            print(f"Contains '##': {'##' in llm_response_content}")
-            print(f"Contains 'Status:': {'Status:' in llm_response_content}")
-            print(f"Contains 'Confiana': {'Confiana' in llm_response_content}")
-            print(f"=== END DEBUG PATTERNS ===")
-
-            print(f"DEBUG: About to call extract_markdown_content with response of length {len(llm_response_content)}")
             try:
-                # Some implementations of llm_service might not have extract_markdown_content directly
-                if hasattr(llm_service, 'extract_markdown_content'):
-                    extracted_content = llm_service.extract_markdown_content(llm_response_content)
-                else:
-                    # Fallback extraction logic directly here if the service doesn't have it
+                # Improved extraction logic using the #FIM_ANALISE_CRITERIO# tag
+                criteria_results = {}
+                
+                # Method 1: Try to split by the explicit tag we requested in the prompt
+                if "#FIM_ANALISE_CRITERIO#" in llm_response_content:
+                    print("DEBUG: Using #FIM_ANALISE_CRITERIO# for robust extraction")
                     import re
-                    pattern = r'```(?:markdown|md)?\n(.*?)\n```'
-                    matches = re.findall(pattern, llm_response_content, re.DOTALL)
-                    content = matches[0] if matches else llm_response_content
+                    # Find criteria blocks
+                    # Example format: ## Critério 1: Name\nContent...#FIM_ANALISE_CRITERIO#
+                    blocks = re.split(r'#FIM_ANALISE_CRITERIO#', llm_response_content)
                     
-                    criteria_results = {}
-                    criteria_pattern = r'##\s*Crit[ée]rio\s*(\d+(?:\.\d+)*)\s*[:\-]?\s*(.+?)\n(.*?)(?=\n##\s*Crit[ée]rio\s*\d+|\n##\s*(?:Resultado|Recomendações)\s*(?:Geral|)|$)'
-                    criteria_matches = re.findall(criteria_pattern, content, re.DOTALL)
+                    for block in blocks:
+                        # Extract criteria header and content from block
+                        # Match "## Critério X: Name"
+                        match = re.search(r'##\s*Crit[ée]rio\s*(\d+(?:\.\d+)*)\s*[:\-]?\s*(.+?)\n(.*?)$', block, re.DOTALL)
+                        if match:
+                            crit_id = match.group(1)
+                            crit_name = match.group(2).strip()
+                            crit_content = match.group(3).strip()
+                            
+                            criteria_results[f"criteria_{crit_id}"] = {
+                                "name": crit_name,
+                                "content": crit_content
+                            }
+                
+                # Method 2: Fallback to regex if tags are missing or only some are present
+                if not criteria_results or len(criteria_results) < len(request.criteria_ids):
+                    print("DEBUG: Falling back to regex extraction (missing tags or incomplete)")
+                    import re
+                    # More flexible pattern that doesn't strictly require newline before ##
+                    criteria_pattern = r'##\s*Crit[ée]rio\s*(\d+(?:\.\d+)*)\s*[:\-]?\s*(.+?)\n(.*?)(?=\s*##\s*Crit[ée]rio\s*\d+|\s*##\s*(?:Resultado|Recomendações)\s*(?:Geral|)|#FIM_ANALISE_CRITERIO#|#FIM#|$)'
+                    matches = re.findall(criteria_pattern, llm_response_content, re.DOTALL)
                     
-                    if not criteria_matches:
-                        flexible_pattern = r'##\s*Crit[ée]rio\s*(\d+(?:\.\d+)*)\s*[:\-]?\s*(.+?)\n(.*?)(?=\n##\s*Crit[ée]rio\s*\d+|\n##\s*(?:Resultado|Recomendações)\s*(?:Geral|)|\Z|$)'
-                        criteria_matches = re.findall(flexible_pattern, content, re.DOTALL)
-                        
-                    for match in criteria_matches:
-                        if len(match) >= 3:
-                            criteria_results[f"criteria_{match[0]}"] = {
+                    for match in matches:
+                        crit_id = match[0]
+                        if f"criteria_{crit_id}" not in criteria_results:
+                            criteria_results[f"criteria_{crit_id}"] = {
                                 "name": match[1].strip(),
                                 "content": match[2].strip()
                             }
-                    
-                    extracted_content = {
-                        "criteria_results": criteria_results,
-                        "raw_response": llm_response_content.strip()
-                    }
+
+                extracted_content = {
+                    "criteria_results": criteria_results,
+                    "raw_response": llm_response_content.strip()
+                }
             except Exception as extract_error:
-                print(f"ERROR: extract_markdown_content failed: {extract_error}")
-                import traceback
-                traceback.print_exc()
-                # Fallback content if extraction fails
+                print(f"ERROR: Extraction failed: {extract_error}")
                 extracted_content = {
                     "criteria_results": {},
                     "raw_response": llm_response_content
                 }
-            print(f"DEBUG: extract_markdown_content returned: {type(extracted_content)}")
+            
+            print(f"DEBUG: Extracted {len(extracted_content.get('criteria_results', {}))} criteria results")
             print(f"DEBUG: extracted_content keys: {extracted_content.keys() if isinstance(extracted_content, dict) else 'Not a dict'}")
             print(f"DEBUG: criteria_results in extracted_content: {extracted_content.get('criteria_results', {}) if isinstance(extracted_content, dict) else 'N/A'}")
 

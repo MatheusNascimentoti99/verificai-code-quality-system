@@ -79,7 +79,13 @@ class LLMService:
             headers = {"Content-Type": "application/json"}
             payload = {
                 "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                "generationConfig": {"maxOutputTokens": max_output_tokens, "temperature": temperature}
+                "generationConfig": {"maxOutputTokens": max_output_tokens, "temperature": temperature},
+                "safetySettings": [
+                    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+                ]
             }
 
         max_retries = 2
@@ -116,7 +122,7 @@ class LLMService:
                 if self.provider == "gemini":
                     url = f"{self.base_url}/{model}:generateContent?key={self.api_key}"
 
-                async with httpx.AsyncClient(timeout=90.0) as client:
+                async with httpx.AsyncClient(timeout=180.0) as client:
                     response = await client.post(url, headers=headers, json=payload)
                     if response.status_code == 200:
                         return {"result": response.json(), "model": model}
