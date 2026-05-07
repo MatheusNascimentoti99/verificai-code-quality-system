@@ -100,9 +100,59 @@ def create_tables():
     try:
         Base.metadata.create_all(bind=engine)
         logger.info("Database tables created successfully")
+        update_schema() # Attempt to update schema with new columns
     except Exception as e:
-        logger.error(f"Error creating database tables: {e}")
-        raise
+        logger.error(f"Error during database initialization: {e}")
+        # We don't re-raise to allow the app to start and respond to health checks
+        # though most endpoints will fail until DB is fixed.
+
+
+def update_schema():
+    """Attempt to add new columns to existing tables (self-healing)"""
+    try:
+        with engine.connect() as conn:
+            # Columns to add to 'prompts' table
+            prompt_columns = [
+                ("name", "VARCHAR(200) DEFAULT 'Novo Prompt'"),
+                ("description", "TEXT"),
+                ("is_public", "BOOLEAN DEFAULT FALSE"),
+                ("is_featured", "BOOLEAN DEFAULT FALSE"),
+                ("system_prompt", "TEXT"),
+                ("user_prompt_template", "TEXT"),
+                ("output_format_instructions", "TEXT"),
+                ("temperature", "FLOAT DEFAULT 0.7"),
+                ("max_tokens", "INTEGER DEFAULT 2000"),
+                ("model_name", "VARCHAR(100) DEFAULT 'gpt-4'"),
+                ("tags", "JSON"),
+                ("supported_languages", "JSON"),
+                ("supported_file_types", "JSON"),
+                ("usage_count", "INTEGER DEFAULT 0"),
+                ("success_rate", "FLOAT DEFAULT 0.0"),
+                ("category", "VARCHAR(50) DEFAULT 'code_analysis'"),
+                ("status", "VARCHAR(50) DEFAULT 'active'")
+            ]
+            
+            for col_name, col_type in prompt_columns:
+                try:
+                    conn.execute(text(f"ALTER TABLE prompts ADD COLUMN IF NOT EXISTS {col_name} {col_type}"))
+                    conn.commit()
+                except Exception as col_e:
+                    logger.warning(f"Could not add column {col_name}: {col_e}")
+
+            # Special case: rename 'type' to 'prompt_type' if 'prompt_type' doesn't exist
+            try:
+                # Check if prompt_type exists
+                res = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='prompts' AND column_name='prompt_type'"))
+                if not res.first():
+                    # If prompt_type doesn't exist, try to rename type
+                    conn.execute(text("ALTER TABLE prompts RENAME COLUMN type TO prompt_type"))
+                    conn.commit()
+                    logger.info("Renamed column 'type' to 'prompt_type' in prompts table")
+            except Exception as rename_e:
+                logger.warning(f"Could not rename type column: {rename_e}")
+
+    except Exception as e:
+        logger.error(f"Error updating schema: {e}")
 
 
 def drop_tables():

@@ -36,11 +36,11 @@ export const useAuthStore = create<AuthStore>()(
             user: response.user,
             token: token,
             isAuthenticated: true,
-            isLoading: false,
           });
         } catch (error) {
-          set({ isLoading: false });
           throw error;
+        } finally {
+          set({ isLoading: false });
         }
       },
 
@@ -57,11 +57,11 @@ export const useAuthStore = create<AuthStore>()(
             user: response.user,
             token: token,
             isAuthenticated: true,
-            isLoading: false,
           });
         } catch (error) {
-          set({ isLoading: false });
           throw error;
+        } finally {
+          set({ isLoading: false });
         }
       },
 

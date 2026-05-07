@@ -91,12 +91,14 @@ async def startup_event():
 
 @app.get("/")
 async def root():
-    """Root endpoint"""
+    """Root endpoint with health checks"""
+    db_ok = db_manager.health_check()
     return {
         "message": "VerificAI Code Quality System API",
         "version": settings.VERSION,
         "docs_url": f"{settings.API_V1_STR}/docs",
-        "status": "operational"
+        "status": "operational",
+        "database": "connected" if db_ok else "disconnected"
     }
 
 

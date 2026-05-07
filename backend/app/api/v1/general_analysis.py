@@ -174,7 +174,7 @@ async def create_general_analysis(
     """Create a general analysis with custom criteria"""
     # Create or get general prompt
     general_prompt = db.query(Prompt).filter(
-        Prompt.type == PromptType.GENERAL,
+        Prompt.prompt_type == PromptType.GENERAL,
         Prompt.user_id == current_user.id
     ).first()
 
@@ -202,7 +202,8 @@ Format your response in markdown.
     if not general_prompt:
         # Create general prompt with user criteria
         general_prompt = Prompt(
-            type=PromptType.GENERAL,
+            prompt_type=PromptType.GENERAL,
+            name="General Analysis Prompt",
             content=prompt_content,
             user_id=current_user.id,
             version=1
