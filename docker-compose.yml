@@ -47,6 +47,8 @@ services:
       - PYTHONUNBUFFERED=1
       - ANTHROPIC_BASE_URL
       - ANTHROPIC_AUTH_TOKEN
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENROUTER_MODEL=${OPENROUTER_MODEL}
     depends_on:
       postgres:
         condition: service_healthy

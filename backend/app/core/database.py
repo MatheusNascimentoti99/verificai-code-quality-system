@@ -53,7 +53,12 @@ database_url = _fix_database_url(settings.DATABASE_URL)
 _connect_args = {}
 _is_postgres = database_url.startswith("postgresql")
 if _is_postgres:
-    _connect_args["sslmode"] = "require"
+    # For local Docker development (localhost, postgres), disable SSL
+    # For cloud hosting (Supabase, Render), require SSL
+    if "localhost" in database_url or "postgres" in database_url.split("@")[1].split(":")[0]:
+        _connect_args["sslmode"] = "disable"
+    else:
+        _connect_args["sslmode"] = "require"
 
 # SQLAlchemy engine - small pool for free-tier cloud hosting
 engine = create_engine(
