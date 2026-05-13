@@ -36,6 +36,7 @@ def create_general_analysis_prompt():
             new_prompt = PromptConfiguration(
                 name="General Analysis with Criteria",
                 prompt_type="GENERAL",
+                user_id=1,  # Assuming admin user with ID 1 exists
                 content=get_prompt_content(),
                 is_active=True,
                 created_at=datetime.utcnow(),

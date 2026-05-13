@@ -50,6 +50,7 @@ temp/
 __pycache__/
 *.py[cod]
 *$py.class
+.venv/
 
 # Distribution / packaging
 .Python
@@ -115,3 +116,5 @@ target/
 .dockerignore
 # Temporary Tests
 Testes_temporarios/
+uploads/
+
