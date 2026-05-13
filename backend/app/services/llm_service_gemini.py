@@ -14,7 +14,7 @@ class GeminiLLMService:
     """Service for direct LLM API integration using Google Gemini with fallback"""
 
     def __init__(self):
-        self.api_key = os.getenv("GEMINI_API_KEY", "AIzaSyDmhnKGqN5FnF5BSIYMdTvYlswednA3wL0")
+        self.api_key = os.getenv("GEMINI_API_KEY")
         self.base_url = "https://generativelanguage.googleapis.com/v1beta"
 
         if not self.api_key:
