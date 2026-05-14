@@ -5,6 +5,7 @@ File upload API endpoints for VerificAI Backend
 import os
 import uuid
 import shutil
+import tempfile
 from typing import List, Optional
 from pathlib import Path
 from datetime import datetime
@@ -35,12 +36,24 @@ ALLOWED_EXTENSIONS = {
     'm', 'sh', 'bash', 'zsh', 'sql', 'html', 'css', 'scss', 'sass', 'less',
     'json', 'xml', 'yaml', 'yml', 'toml', 'ini', 'conf', 'config', 'md', 'txt'
 }
-UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", "uploads"))
 
 
 def ensure_upload_dir():
-    """Ensure upload directory exists"""
-    UPLOAD_DIR.mkdir(exist_ok=True)
+    """Ensure upload directory exists; fall back to temp dir if not writable."""
+    global UPLOAD_DIR
+    try:
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        # Try to create a small test file to ensure it's writable
+        test_file = UPLOAD_DIR / ".writetest"
+        with open(test_file, "w") as f:
+            f.write("ok")
+        test_file.unlink()
+    except Exception as e:
+        logger.warning(f"Upload dir {UPLOAD_DIR} not writable: {e}. Falling back to temp dir.")
+        temp_dir = Path(tempfile.gettempdir()) / "verificai_uploads"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        UPLOAD_DIR = temp_dir
 
 
 def validate_file(file: UploadFile, user_id: int) -> UploadValidationResponse:
