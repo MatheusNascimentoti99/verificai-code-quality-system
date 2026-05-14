@@ -1,46 +1,685 @@
 ## Avaliação Geral
-O projeto apresenta uma arquitetura altamente modular e organizada, refletindo uma refatoração significativa de um antigo sistema monolítico. A separação em camadas (`controller`, `services`, `utils`, `domain`, `providers`) segue princípios de design sólidos (SOLID), facilitando a testabilidade e manutenção. O código demonstra maturidade no tratamento de exceções, uso de padrões de projeto (como Facade, Factory e Singleton) e preocupação com a segurança e eficiência de recursos. A legibilidade é excelente, com documentação clara em quase todos os módulos.
+O código apresenta uma arquitetura modular bem-organizada, com uma clara separação de responsabilidades em serviços e controladores, seguindo muitos dos princípios SOLID, especialmente a Responsabilidade Única (SRP) e a Inversão de Dependência (DIP) através de interfaces e factories. A refatoração do serviço de IA em um facade é um exemplo notável dessa abordagem.
 
----
+Pontos fortes incluem a validação robusta de arquivos PDF usando magic numbers, a sanitização de caminhos de arquivo para mitigar Path Traversal, o uso de um padrão Singleton para o leitor EasyOCR (reduzindo o consumo de memória), e a implementação de resiliência com retry e fallback para chamadas de API de IA. O tratamento de erros é abrangente em muitas seções, com exceções personalizadas e logs detalhados, embora algumas capturas genéricas ainda possam ser refinadas.
 
-## Critério 1: Código segue boas práticas e padrões de codificação
-**Status:** Conforme
-**Confiança:** 0.95
+No entanto, há áreas que merecem atenção. Operações de I/O potencialmente bloqueantes, como `subprocess.run` e `time.sleep`, podem impactar a performance em ambientes assíncronos se não forem executadas em thread pools dedicados. O manuseio de dados em larga escala, especialmente a codificação de PDFs inteiros em base64 e o carregamento completo de PDFs e planilhas Excel na memória, representa um risco de pressão sobre a memória e pode levar a gargalos de performance para documentos muito grandes. A instanciação manual de dependências em alguns serviços, embora coexistindo com a injeção construtor em outros, poderia ser mais consistente. Além disso, a ausência de DTOs Pydantic visíveis nos pontos de entrada dos controladores para `Dict[str, Any]` limita a validação estrutural e tipagem forte que o FastAPI oferece.
 
-O código segue rigorosamente boas práticas de desenvolvimento Python. A estrutura de diretórios é lógica e modular. Observa-se a aplicação consistente de princípios como:
-- **SRP (Single Responsibility Principle):** Cada classe e função possui uma responsabilidade única, como visto em `PDFProcessor` vs `OCRService`.
-- **Inversão de Dependência:** O uso de classes base abstratas (`AIProvider`, `DirectoryManagerInterface`) permite a troca de implementações sem alterar o código cliente.
-- **Gerenciamento de Recursos:** O uso de `contextlib` (implícito em `with`), tratamento de encerramento de conexões HTTP (`httpx.AsyncClient`) e a implementação do padrão Singleton para o `EasyOCR Reader` (economizando ~5GB de RAM) demonstram preocupação com performance e estabilidade.
-- **Segurança:** O uso de "magic numbers" (`%PDF`) para validação de arquivos em `pdf_upload_service.py` é uma prática superior a apenas confiar no `Content-Type`.
+Em geral, o código demonstra um esforço significativo em direção a uma arquitetura limpa e robusta, com boas práticas de segurança e tratamento de erros, mas com oportunidades de otimização de performance e maior consistência na aplicação de padrões de design.
+
+## Critério 1: Princípios SOLID: Analisar a aplicação de princípios de design consolidados, como a Responsabilidade Única - SRP (evitando componentes que acumulam funções díspares) como controllers com múltiplos endpoints e a Inversão de Dependência (favorecendo o uso de mecanismos de injeção de dependência em vez da instanciação manual de componentes) como a instanciação manual de dependências em vez de usar a injeção padrão do NestJS
+**Status:** Parcialmente Conforme
+**Confiança:** 0.85%
+
+O código demonstra um esforço consciente na aplicação dos princípios SOLID, com muitos pontos positivos, mas também áreas de melhoria, especialmente na Inversão de Dependência (DIP).
+
+**Responsabilidade Única (SRP):**
+O projeto está bem estruturado em módulos e serviços, onde a maioria dos componentes possui uma responsabilidade clara:
+-   **Controladores:** `extraction_controller.py`, `pdf_controller.py`, `processing_controller.py`, `report_controller.py` são especializados e delegam a lógica de negócio para os serviços correspondentes. Por exemplo, `ExtractionController` delega para `DataExtractionService`.
+-   **Serviços:** Há uma hierarquia de serviços bem definida. `ReportGenerationService` coordena a geração de relatórios, delegando tarefas específicas para `ProcessingOrchestrator` (lógica de negócio), `BackgroundTaskManager` (cleanup) e `FileResponseBuilder` (resposta HTTP).
+-   **Utilitários:** `pdf_name_formatter.py` contém apenas funções de formatação de nomes de PDF. `DirectoryManager` centraliza a gestão de diretórios.
+-   **Facade de IA (`AIServiceFacade`):** Explica explicitamente sua função de orquestração e compatibilidade, enquanto delega para `config`, `pdf_processor`, `chemical_processor`, `excel_service`, `file_manager`, `ai_provider`, `fallback_processor`.
+-   **Classes de Erro Específicas:** `PDFConversionError`, `DocumentGenerationError`, `AIProviderError`, `ExcelServiceError` são exemplos de classes de exceção que encapsulam a responsabilidade de erro.
+
+**Inversão de Dependência (DIP):**
+Aqui, a aplicação é mais inconsistente:
+-   **Pontos Positivos:**
+    -   **Abstrações:** `AIProvider` e `DirectoryManagerInterface` são interfaces abstratas que permitem a injeção de implementações concretas, como visto em `AIProviderFactory` e `OCRProviderFactory`.
+    -   **Injeção no Construtor:** `ExcelService` exemplifica bem o DIP, recebendo `directory_manager`, `config_manager` e `data_cleaner` via construtor, com valores padrão que usam singletons (ex: `get_directory_manager()`). Isso permite testabilidade e flexibilidade.
+    -   **Factories:** `AIProviderFactory` e `OCRProviderFactory` são excelentes exemplos de como o DIP é aplicado, permitindo a criação de diferentes provedores de IA e OCR sem que o código cliente precise conhecer as implementações concretas.
+-   **Pontos de Melhoria (Instanciação Manual):**
+    -   Muitos serviços ainda instanciam suas dependências diretamente dentro de seus construtores, violando o DIP:
+        -   `BackgroundExtractionService`: `self.data_extraction_service = DataExtractionService()` e `self.report_generation_service = ReportGenerationService()`.
+        -   `DataExtractionService`: `self.pdf_upload_service = pdf_upload_service or PDFUploadService()`. Embora use um padrão de injeção opcional, a dependência padrão é instanciada manualmente.
+        -   `ProcessingOrchestrator`: `self.config = get_config()` e `self.directory_manager = get_directory_manager()`. Embora `get_config()` e `get_directory_manager()` retornem singletons (o que é uma forma de gerenciar dependências), a classe `ProcessingOrchestrator` não recebe essas dependências via construtor, dificultando a substituição em testes unitários.
+        -   `ReportGenerationService`: `self.config = get_config()`.
+        -   `AIServiceFacade`: Instancia várias dependências internamente (`get_config`, `get_pdf_processor`, `get_ocr_service`, `get_chemical_processor`, `get_excel_service`, `get_file_manager`).
+
+A presença de singletons globais (e.g., `_ai_service_facade`, `_directory_manager`, `_ocr_service`, `_excel_service`, `_chemical_processor`, `_config`) através de funções como `get_ai_service_facade()` ou `get_config()` é uma forma de gerenciar o ciclo de vida e garantir que as dependências complexas sejam inicializadas uma única vez. No entanto, para aderir mais estritamente ao DIP e melhorar a testabilidade, essas dependências globais deveriam ser injetadas nos construtores das classes que as utilizam, mesmo que o valor padrão seja a chamada ao singleton.
+
+**Evidências do Código:**
+-   **SRP:**
+    -   `app/services/orchestration/processing_orchestrator.py`: "Responsável apenas pela orquestração da lógica de negócio."
+    -   `app/services/http/response_builder.py`: "Responsável apenas pela construção de objetos de resposta HTTP."
+    -   `app/controller/extraction_controller.py`: `self.data_extraction_service = DataExtractionService()` (delegação).
+-   **DIP (Positivo):**
+    -   `app/services/ai/providers/base.py`: Define `AIProvider` (interface).
+    -   `app/services/ai/providers/openai_provider.py`: `AIProviderFactory.register_provider("OPENAI", OpenAIProvider)`.
+    -   `app/services/ai/domain/excel_service.py`:
+        ```python
+        class ExcelService:
+            def __init__(self, 
+                         directory_manager: DirectoryManagerInterface = None,
+                         config_manager = None,
+                         data_cleaner: DataCleaner = None):
+                self.directory_manager = directory_manager or get_directory_manager()
+                self.config_manager = config_manager or get_config_manager()
+                self.data_cleaner = data_cleaner or DataCleaner()
+        ```
+-   **DIP (Melhoria - Instanciação Manual):**
+    -   `app/services/document/background_extraction_service.py`:
+        ```python
+        class BackgroundExtractionService:
+            def __init__(self):
+                self.data_extraction_service = DataExtractionService()
+                self.report_generation_service = ReportGenerationService()
+        ```
+    -   `app/services/orchestration/processing_orchestrator.py`:
+        ```python
+        class ProcessingOrchestrator:
+            def __init__(self):
+                self.config = get_config()
+                self.directory_manager = get_directory_manager()
+        ```
 
 **Recomendações:**
-- Centralizar ainda mais as configurações de log, utilizando o módulo `logging` do Python em vez de `print` em todo o código, para permitir níveis de severidade (DEBUG, INFO, ERROR).
-- Em `app/services/ai/utils/excel/aplicar_formulas.py`, o arquivo é excessivamente longo (80k+ caracteres). Poderia ser dividido em sub-módulos de funções de cálculo por categoria.
+-   **Consistência na Injeção de Dependência:** Revise todos os construtores de serviços e controladores para injetar as dependências via parâmetros, mesmo que valores padrão sejam usados para singletons.
+    -   Exemplo: Em `BackgroundExtractionService`, altere para `__init__(self, data_extraction_service: DataExtractionService = None, report_generation_service: ReportGenerationService = None): self.data_extraction_service = data_extraction_service or DataExtractionService()`. Isso melhora a testabilidade e a clareza das dependências.
+-   **Uso de Contêineres de DI (Opcional):** Para projetos maiores, considere a introdução de um contêiner de Injeção de Dependência (como `injector` ou um framework web com DI nativo se fosse o caso de NestJS/Spring) para gerenciar o ciclo de vida e a injeção de dependências de forma mais automatizada e centralizada.
+-   **Refatorar `AIServiceFacade`:** Embora seja um facade, suas dependências internas poderiam ser mais explicitamente injetadas ou gerenciadas por um mecanismo de DI para melhorar a testabilidade de seus componentes internos.
 
 #FIM_ANALISE_CRITERIO#
 
----
-
-## Critério 2: Variáveis e funções têm nomes descritivos e significativos
+## Critério 2: Acoplamento a Frameworks: Detectar o uso de funcionalidades que acoplam o código a implementações específicas do framework (ex: uso de @Res() do Express no NestJS), o que dificulta a manutenção e a aplicação de interceptors e pipes globais.
 **Status:** Conforme
-**Confiança:** 0.98
+**Confiança:** 0.95%
 
-A nomeação no projeto é exemplar. Segue o padrão `snake_case` do PEP 8, e os nomes das funções refletem claramente suas ações (ex: `convert_pdf_to_images_and_extract_data`, `schedule_file_cleanup`, `validate_extracted_data`). Não há nomes ambíguos ou abreviações obscuras. As classes possuem nomes que descrevem seus papéis (ex: `ProcessingOrchestrator`, `BackgroundTaskManager`), o que torna a leitura do fluxo de execução quase intuitiva.
+A análise do código indica que o acoplamento ao framework FastAPI é feito de maneira idiomática e controlada, sem o uso de funcionalidades que acoplem o código a implementações de baixo nível do framework subjacente (como o Express/Starlette). O uso de `FileResponse` e `BackgroundTasks` do FastAPI é a forma recomendada de interagir com as capacidades de resposta de arquivo e execução assíncrona da plataforma.
 
-**Evidências:**
-- Em `app/services/document/report_generation_service.py`, os métodos `generate_report`, `_get_temp_files_for_cleanup` e `validate_input_data` são autoexplicativos.
-- Em `app/services/ai/processors/ocr_service.py`, os métodos `process_single_page` e `_apply_text_corrections` comunicam precisamente o seu propósito.
-- O uso de `lpco` e `sec_data` é consistente em todo o sistema, facilitando a rastreabilidade dos dados.
+**Evidências do Código:**
+-   **`fastapi.responses.FileResponse`:** A classe `FileResponseBuilder` em `app/services/http/response_builder.py` é responsável por construir objetos `FileResponse`. Este é o mecanismo padrão e de alto nível do FastAPI para enviar arquivos como resposta HTTP, o que permite que o framework gerencie os cabeçalhos HTTP, tipos MIME e o streaming do arquivo de forma eficiente. Isso não expõe a interface de resposta subjacente (por exemplo, `response` do Starlette/ASGI) diretamente, mantendo o acoplamento em um nível aceitável.
+    ```python
+    # app/services/http/response_builder.py
+    from fastapi.responses import FileResponse
+    # ...
+    class FileResponseBuilder:
+        # ...
+        def build_pdf_response(self, ... ) -> FileResponse:
+            # ...
+            return FileResponse(
+                path=file_path,
+                filename=filename,
+                media_type='application/pdf',
+                headers=headers
+            )
+    ```
+-   **`fastapi.BackgroundTasks`:** A classe `BackgroundTaskManager` em `app/services/tasks/background_manager.py` encapsula a funcionalidade de `BackgroundTasks` do FastAPI para agendar operações de cleanup. O FastAPI executa essas tarefas em um thread pool separado, evitando o bloqueio do loop de eventos principal. Isso é uma funcionalidade de alto nível do framework e não um acoplamento a detalhes de implementação.
+    ```python
+    # app/services/tasks/background_manager.py
+    from fastapi import BackgroundTasks
+    # ...
+    class BackgroundTaskManager:
+        def __init__(self, background_tasks: BackgroundTasks):
+            self._background_tasks = background_tasks
+        
+        def schedule_file_cleanup(self, file_paths: List[str]) -> None:
+            self._background_tasks.add_task(self._cleanup_files, file_paths)
+    ```
+-   **Ausência de `@Res()` ou equivalentes:** Não há indicações de que o código esteja acessando o objeto de resposta HTTP de baixo nível (como o objeto `Response` do Starlette ou `res` do Express) diretamente. Isso significa que o código não está ignorando as abstrações do FastAPI, o que preserva a capacidade de usar interceptors, middleware e pipes globais do framework.
+
+O uso dessas classes e decoradores é a maneira padrão de trabalhar com o FastAPI, e eles são projetados para serem a interface pública e estável do framework. Portanto, não representam um acoplamento excessivo ou prejudicial.
 
 **Recomendações:**
-- O código já está em um nível de legibilidade muito alto. A única sugestão seria garantir que os tipos de retorno em funções complexas (como as que retornam tuplas `Tuple[Dict, Dict]`) sejam encapsulados em `NamedTuple` ou `Dataclasses` para tornar o acesso aos dados (`data[0]`, `data[1]`) mais explícito (`result.chemical`, `result.secondary`).
+-   Manter a prática atual de usar as abstrações de alto nível do FastAPI para respostas e gerenciamento de tarefas em background.
+-   Continuar evitando o acesso direto a objetos de requisição/resposta de baixo nível do framework subjacente (Starlette/ASGI).
+
+#FIM_ANALISE_CRITERIO#
+
+## Critério 3: Violação de Camadas: Identificar se a lógica de negócio está incorretamente localizada em camadas de interface (como controladores de API), em vez de residir em camadas de serviço ou domínio dedicadas.
+**Status:** Conforme
+**Confiança:** 0.95%
+
+O código adere bem ao princípio de separação de camadas, com a lógica de negócio predominantemente residindo em camadas de serviço e orquestração, e os controladores de API atuando principalmente como pontos de entrada e coordenadores.
+
+**Evidências do Código:**
+-   **Controladores como Camadas de Interface:** Os controladores (`extraction_controller.py`, `pdf_controller.py`, `processing_controller.py`, `report_controller.py`) demonstram claramente a responsabilidade de receber requisições HTTP, validar entradas básicas (como a presença de `lpco`), e delegar a execução da lógica para os serviços. Eles não contêm a lógica de negócio complexa em si.
+    -   Exemplo em `app/controller/extraction_controller.py`:
+        ```python
+        class ExtractionController:
+            def __init__(self):
+                self.data_extraction_service = DataExtractionService()
+
+            def extract_data(self, lpco: str, laudo_file: UploadFile) -> Dict[str, Any]:
+                try:
+                    extracted_data = self.data_extraction_service.extract_pdf_data(lpco, laudo_file)
+                    # ... validação básica e retorno
+                    return extracted_data
+                # ... tratamento de exceções
+        ```
+        O método `extract_data` chama `self.data_extraction_service.extract_pdf_data`, que é onde a lógica de extração reside.
+-   **Lógica de Negócio em Camadas de Serviço/Domínio:**
+    -   **`DataExtractionService` (`app/services/document/data_extraction_service.py`):** Contém a lógica de extração de dados de PDFs, chamando o serviço de IA (`convert_pdf_to_images_and_extract_data`) e orquestrando o salvamento de PDFs temporários (`pdf_upload_service`).
+    -   **`ReportGenerationService` (`app/services/document/report_generation_service.py`):** Orquestra a geração de relatórios, delegando para `ProcessingOrchestrator` (para a lógica central de documento), `BackgroundTaskManager` (para limpeza) e `FileResponseBuilder` (para construir a resposta). Isso mantém a lógica de "como gerar um relatório" separada do "como entregar um relatório via HTTP".
+    -   **`ProcessingOrchestrator` (`app/services/orchestration/processing_orchestrator.py`):** É explicitamente descrito como "Responsável apenas pela orquestração da lógica de negócio" e contém a sequência de passos para gerar documentos Excel e PDF, como `update_excel` e `convert_excel_to_pdf_libreoffice`.
+    -   **Serviços de IA e Excel (`app/services/ai/` e `app/services/ai/domain/excel_service.py`):** Contêm a lógica complexa de processamento de IA, formatação de dados, aplicação de fórmulas Excel e normalização de classificações. O `AIServiceFacade` em `app/services/ai/facade.py` atua como a principal camada de orquestração para todas as operações de IA.
+
+A estrutura de diretórios (`app/controller`, `app/services`, `app/services/ai/domain`) também reforça essa separação, onde `domain` e os subdiretórios de `services` são onde a lógica de negócio e as regras de domínio são implementadas.
+
+**Recomendações:**
+-   Manter a estrutura de camadas atual, pois ela é clara e eficaz.
+-   Continuar a garantir que novas funcionalidades e lógicas de negócio sejam implementadas nas camadas de serviço ou domínio apropriadas, e não nos controladores.
+-   Garantir que as validações de entrada mais complexas (além da presença e sanitização básica) também sejam delegadas aos serviços, ou que sejam usadas DTOs Pydantic robustas nos controladores para validar a estrutura e tipos de dados antes de passá-los para a camada de serviço.
+
+#FIM_ANALISE_CRITERIO#
+
+## Critério 4: Pressão sobre a Memória: Analisar rotinas e laços que criam um volume excessivo de objetos de curta duração, pressionando o coletor de lixo (Garbage Collector) e causando pausas desnecessárias na aplicação. Avaliar se objetos poderiam ser reutilizados para otimizar o uso da memória.
+**Status:** Parcialmente Conforme
+**Confiança:** 0.80%
+
+O código demonstra uma preocupação com a pressão sobre a memória em alguns pontos críticos, mas ainda há áreas onde o manuseio de grandes volumes de dados pode gerar picos de uso de memória.
+
+**Pontos Positivos (Mitigações Existentes):**
+-   **Singleton para EasyOCR Reader:** A implementação de `EasyOCRService` (`app/services/ai/processors/easy_ocr_service.py`) usa o padrão Singleton para a instância do `easyocr.Reader`. Isso é crucial, pois a inicialização do `Reader` é notoriamente pesada em termos de memória (mencionado no código como "economiza ~5GB RAM").
+    ```python
+    # app/services/ai/processors/easy_ocr_service.py
+    class EasyOCRService(OcrProvider):
+        _instance: Optional['EasyOCRService'] = None
+        _reader = None
+        
+        def __new__(cls) -> 'EasyOCRService':
+            if cls._instance is None:
+                cls._instance = super().__new__(cls)
+            return cls._instance
+        # ... inicialização do reader dentro de __init__
+    ```
+-   **Reuso de Cliente HTTP:** O `BackgroundExtractionService` utiliza um `httpx.AsyncClient` configurado com `limits` e reuso via `_get_http_client()`. Isso evita a criação e fechamento de múltiplas conexões HTTP para cada callback, reduzindo o overhead e a pressão sobre o coletor de lixo associada a objetos de conexão de rede.
+    ```python
+    # app/services/document/background_extraction_service.py
+    class BackgroundExtractionService:
+        # ...
+        self._http_client = None
+        
+        def _get_http_client(self) -> httpx.AsyncClient:
+            if self._http_client is None or self._http_client.is_closed:
+                # Configurações otimizadas para evitar ECONNRESET
+                limits = httpx.Limits(...)
+                self._http_client = httpx.AsyncClient(...)
+            return self._http_client
+    ```
+
+**Pontos de Melhoria (Potenciais Problemas de Memória):**
+-   **Codificação de PDF para Base64:** Em `BackgroundExtractionService.processar_extracao_completa`, o PDF inteiro é lido para a memória (`pdf_file.read()`) e depois codificado em base64. Para PDFs grandes, isso pode consumir uma quantidade significativa de RAM, criando objetos de curta duração (bytes do PDF, string base64) que pressionam o GC.
+    ```python
+    # app/services/document/background_extraction_service.py
+    with open(pdf_file_path, "rb") as pdf_file:
+        pdf_bytes = pdf_file.read() # <--- Carrega PDF inteiro na memória
+        pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8') # <--- Cria string grande
+    ```
+-   **Processamento de PDF e Imagens:**
+    -   `pdfplumber.open(pdf_path)` em `PDFProcessor` carrega o PDF inteiro na memória. Embora seja eficiente para PDFs de tamanho moderado, pode ser um problema para documentos muito grandes ou com muitas páginas.
+    -   `convert_from_path` (usado em `OCRService`) converte páginas de PDF em imagens. Para PDFs com muitas páginas ou alta DPI, isso pode gerar uma série de objetos `PIL.Image` e `numpy.ndarray` na memória, mesmo que temporariamente. O cleanup subsequente ajuda, mas os picos de memória ainda podem ocorrer.
+-   **Processamento de Excel:** `openpyxl.load_workbook(nome_arquivo)` em `ExcelService` carrega a planilha Excel inteira na memória. Para planilhas com muitos dados ou formatação complexa, isso pode ser um consumidor significativo de memória.
+    ```python
+    # app/services/ai/domain/excel_service.py
+    workbook = load_workbook(temp_path) # <--- Carrega Excel inteiro na memória
+    ```
+-   **Criação de Estruturas de Dados Intermediárias:** Funções como `DataCleaner.clean_data` e `DataConsolidator.consolidate_fragmented_data` criam cópias de estruturas de dados (dicionários, listas, strings) para processamento. Embora isso seja normal, se os dados de entrada forem muito grandes, essas cópias intermediárias podem aumentar a pressão sobre a memória.
+
+**Recomendações:**
+-   **Streaming para PDFs e Base64:** Para a codificação de PDF em base64, considere uma abordagem de streaming que não carregue o PDF inteiro na memória. Bibliotecas como `io.BytesIO` ou a leitura em chunks podem ser utilizadas.
+-   **Otimização de Processamento de PDFs Grandes:** Se a aplicação precisar lidar com PDFs muito grandes (centenas de MBs ou milhares de páginas), investigue alternativas a `pdfplumber` e `pdf2image` que suportem processamento em streaming ou com uso de memória mais controlado.
+-   **Otimização de Processamento de Excel Grandes:** Para planilhas Excel muito grandes, explore bibliotecas como `pyxlsb` ou `openpyxl` em modo `read_only` (se a escrita não for necessária) ou processe os dados em chunks, evitando carregar a planilha inteira.
+-   **Análise de Perfil de Memória:** Utilize ferramentas de perfilamento de memória (ex: `memory_profiler` no Python) para identificar gargalos exatos e objetos de curta duração que mais contribuem para a pressão sobre o coletor de lixo.
+
+#FIM_ANALISE_CRITERIO#
+
+## Critério 5: Ciclo de Vida de Recursos Externos: Verificar se recursos externos, como arquivos temporários ou conexões de rede, são liberados de forma determinística em todos os fluxos de execução (sucesso, erro e finalização), evitando vazamentos de recursos.
+**Status:** Parcialmente Conforme
+**Confiança:** 0.85%
+
+O código demonstra um esforço considerável para gerenciar o ciclo de vida de recursos externos, especialmente arquivos temporários e conexões de rede, mas existem algumas nuances e heurísticas que podem ser aprimoradas.
+
+**Pontos Positivos:**
+-   **`BackgroundTaskManager` para Cleanup de Arquivos:** Esta classe é explicitamente projetada para agendar a remoção de arquivos temporários, o que é uma excelente prática. Ela tenta remover arquivos mesmo que não os encontre e loga erros, garantindo que o processo de cleanup não interrompa a aplicação. O atraso (`time.sleep`) é uma tentativa de evitar race conditions com `FileResponse`.
+    ```python
+    # app/services/tasks/background_manager.py
+    class BackgroundTaskManager:
+        # ...
+        def _cleanup_files(self, file_paths: List[str]) -> None:
+            # ...
+            time.sleep(delay_seconds) # Heurística para evitar race condition
+            for file_path in file_paths:
+                try:
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                        print(f"[BackgroundTaskManager] ✓ Arquivo removido: {file_path}")
+                    # ...
+                except Exception as e:
+                    print(f"[BackgroundTaskManager] ❌ Erro ao remover arquivo {file_path}: {e}")
+    ```
+-   **`with open(...)` para Arquivos:** O uso do gerenciador de contexto (`with open(...)`) para operações de arquivo (leitura de PDF para base64, leitura de arquivo para SharePoint) garante que os arquivos sejam fechados automaticamente, mesmo em caso de exceções.
+    ```python
+    # app/services/document/background_extraction_service.py
+    with open(pdf_file_path, "rb") as pdf_file:
+        pdf_bytes = pdf_file.read()
+    ```
+-   **`httpx.AsyncClient` com Pooling e Fechamento:** O `BackgroundExtractionService` utiliza `httpx.AsyncClient` com configurações de pooling (`max_keepalive_connections`, `max_connections`, `keepalive_expiry`) e um mecanismo para reutilizar o cliente (`_get_http_client`). Embora o cliente não seja explicitamente fechado no final da requisição (o que é esperado para um cliente reutilizável), o `httpx` gerencia as conexões subjacentes. Para garantir um fechamento gracioso na finalização da aplicação, o cliente deveria ser fechado explicitamente ao desligar o servidor ou quando não for mais necessário.
+-   **Cleanup em `finally`:** Em `BackgroundExtractionService.processar_extracao_completa`, a remoção do arquivo temporário de entrada do PDF ocorre em um bloco `finally`, garantindo que seja tentada tanto em caso de sucesso quanto de erro no processamento.
+    ```python
+    # app/services/document/background_extraction_service.py
+    finally:
+        # ...
+        try:
+            import os
+            if os.path.exists(laudo_file_path):
+                os.remove(laudo_file_path)
+        except Exception as cleanup_error:
+            print(f"[BackgroundExtractionService] ⚠️ Erro ao limpar arquivo temporário: {cleanup_error}")
+    ```
+-   **`tempfile.NamedTemporaryFile` para Excel:** Em `ExcelService.update_report`, um arquivo temporário é criado usando `tempfile.NamedTemporaryFile` e explicitamente removido no bloco `finally`. Isso é uma boa prática.
+
+**Pontos de Melhoria / Considerações:**
+-   **Heurística `time.sleep`:** O `time.sleep` em `_cleanup_files` é uma heurística para evitar que o arquivo seja removido antes que o `FileResponse` do FastAPI o tenha enviado completamente. Embora funcione na prática, não é uma solução determinística e pode falhar sob certas condições de carga ou tempo. Uma abordagem mais robusta seria usar um mecanismo de sinalização ou esperar por um evento que garanta a conclusão da resposta. No entanto, para `BackgroundTasks` do FastAPI, que rodam em um thread separado, essa é uma solução comum.
+-   **Fechamento de `httpx.AsyncClient`:** Embora o cliente seja reutilizado, não há um mecanismo explícito para fechá-lo quando a aplicação é encerrada. Em aplicações FastAPI, isso geralmente é feito com `lifespan events` para garantir que os recursos sejam liberados de forma graciosa. Se o cliente `httpx` for global (como o `_ai_service_facade`), ele deveria ter um método para fechar o cliente HTTP, chamado durante o desligamento.
+-   **Recursos do LibreOffice:** A função `convert_excel_to_pdf_with_validation` em `pdf_service.py` utiliza `subprocess.run` para invocar o LibreOffice. Embora o subprocesso seja encerrado, é importante garantir que o LibreOffice não deixe processos zumbis ou arquivos temporários próprios, o que geralmente é gerenciado pelo próprio LibreOffice, mas vale a pena monitorar em produção.
+
+**Recomendações:**
+-   **Fechamento Gracioso de `httpx.AsyncClient`:** Implemente um mecanismo de desligamento para o `AIServiceFacade` (ou a instância global do `httpx.AsyncClient` se for gerenciado separadamente) que chame `client.aclose()` quando a aplicação FastAPI for encerrada. Isso pode ser feito usando `lifespan events` do FastAPI.
+-   **Monitoramento de Recursos do LibreOffice:** Embora fora do controle direto do código Python, monitore o uso de recursos e processos do LibreOffice em ambientes de produção para garantir que não haja vazamentos de processos ou arquivos temporários.
+-   **Documentar Ciclo de Vida:** Adicione comentários ou documentação clara sobre o ciclo de vida dos recursos em cada serviço, descrevendo como eles são adquiridos, usados e liberados.
+
+#FIM_ANALISE_CRITERIO#
+
+## Critério 6: Operações de I/O Bloqueantes ou Inseguras: Inspecionar chamadas de rede e outras operações de entrada/saída para garantir a configuração de tempos limite (timeouts) e limites de tamanho de payload, prevenindo que a aplicação fique bloqueada ou vulnerável a sobrecargas.
+**Status:** Parcialmente Conforme
+**Confiança:** 0.80%
+
+O código apresenta uma mistura de boas práticas e potenciais pontos de bloqueio que precisam ser gerenciados, especialmente em um contexto assíncrono como o FastAPI.
+
+**Pontos Positivos (Mitigações Existentes):**
+-   **Timeouts e Limites em Chamadas HTTP:** O `BackgroundExtractionService` utiliza `httpx.AsyncClient` com um `timeout` configurado (`timeout=60.0`) e `limits` para o pool de conexões. Isso é crucial para evitar que chamadas de rede fiquem penduradas indefinidamente ou consumam recursos excessivos, prevenindo bloqueios e sobrecargas.
+    ```python
+    # app/services/document/background_extraction_service.py
+    self._http_client = httpx.AsyncClient(
+        timeout=60.0,  # Aumentado para payloads grandes
+        limits=limits,
+        follow_redirects=True,
+        http2=False
+    )
+    ```
+-   **Sanitização de Caminhos para `subprocess.run`:** Em `pdf_service.py`, a função `convert_excel_to_pdf_with_validation` sanitiza os caminhos de arquivo (`excel_path.resolve()`, `output_dir.resolve()`) antes de passá-los para `subprocess.run`. Isso mitiga riscos de Path Traversal e Command Injection, que são vulnerabilidades comuns em operações de I/O com entradas do usuário.
+    ```python
+    # app/services/pdf_service.py
+    excel_path_str = str(excel_path.resolve())
+    output_dir_str = str(output_dir.resolve())
+    command = [
+        libreoffice_cmd,
+        "--headless",
+        "--convert-to", "pdf",
+        "--outdir", output_dir_str,
+        excel_path_str
+    ]
+    result = subprocess.run(command, check=True, capture_output=True, text=True)
+    ```
+
+**Pontos de Melhoria (Potenciais Bloqueios e Riscos):**
+-   **Operações Síncronas Bloqueantes em Loop de Eventos Assíncrono:**
+    -   **`subprocess.run`:** A chamada a `subprocess.run` em `pdf_service.py` é uma operação síncrona e potencialmente longa (conversão de Excel para PDF). Esta função é chamada por `ProcessingOrchestrator.generate_document`, que por sua vez é chamada por `ReportGenerationService.generate_report` (síncrono) e `BackgroundExtractionService.processar_extracao_completa` (assíncrono). Quando `processar_extracao_completa` (que é um `async def`) chama `orchestrator.generate_document`, ela está efetivamente executando uma operação síncrona bloqueante no loop de eventos, o que pode paralisar o servidor FastAPI se a operação demorar muito.
+    ```python
+    # app/services/document/background_extraction_service.py
+    async def processar_extracao_completa(...):
+        # ...
+        orchestrator = ProcessingOrchestrator()
+        pdf_file_path = orchestrator.generate_document(lpco, chem_data, sec_data) # <--- Chama função síncrona com subprocess.run
+        # ...
+    ```
+    -   **`time.sleep` em `BackgroundTaskManager`:** O `time.sleep(delay_seconds)` em `_cleanup_files` é uma chamada bloqueante. Embora `BackgroundTasks` do FastAPI rode em um thread separado, se essa função fosse chamada diretamente em um contexto `async`, ela bloquearia o loop de eventos. No entanto, no uso atual, é mitigado pelo próprio mecanismo de `BackgroundTasks`.
+-   **Limites de Tamanho de Payload:** Não há limites de tamanho de payload configurados explicitamente para arquivos de upload (`UploadFile`). Embora o FastAPI tenha um limite padrão, para mitigar ataques de negação de serviço (DoS) ou consumo excessivo de recursos, é uma boa prática definir limites explícitos para o tamanho máximo de arquivos enviados.
+-   **Credenciais em Código (`sharepoint_service.py`):** As credenciais de SharePoint (`USER_ACCOUNT`, `USER_PASSWORD`) são importadas de `app.core.config`, que as obtém de variáveis de ambiente. No entanto, o `sharepoint_service.py` as utiliza diretamente. Embora as variáveis de ambiente sejam um bom lugar para credenciais, é crucial que o acesso a esses serviços externos seja feito de forma segura (ex: OAuth, tokens de curta duração) e que as credenciais não sejam expostas em logs ou repositórios. O uso direto de nome de usuário/senha em código pode ser um risco se o sistema de credenciais não for robusto.
+    ```python
+    # app/services/sharepoint_service.py
+    from app.core.config import USER_ACCOUNT, USER_PASSWORD
+    # ...
+    username = USER_ACCOUNT
+    password = USER_PASSWORD
+    ctx = ClientContext(site_url).with_credentials(UserCredential(username, password))
+    ```
+
+**Recomendações:**
+-   **Executar Operações Bloqueantes em Thread Pool:** Para chamadas síncronas e bloqueantes como `subprocess.run` dentro de funções `async def`, utilize `run_in_threadpool` do `starlette.concurrency` (ou `asyncio.to_thread` no Python 3.9+) para executá-las em um thread pool separado. Isso evita o bloqueio do loop de eventos principal do FastAPI.
+    ```python
+    # Exemplo de como usar run_in_threadpool
+    from starlette.concurrency import run_in_threadpool
+    # ...
+    # Dentro de processar_extracao_completa:
+    pdf_file_path = await run_in_threadpool(orchestrator.generate_document, lpco, chem_data, sec_data)
+    ```
+-   **Definir Limites de Tamanho de Upload:** Configure limites de tamanho de arquivo para `UploadFile` no FastAPI. Isso pode ser feito no nível do servidor (Uvicorn) ou usando um middleware no FastAPI.
+-   **Segurança de Credenciais:** Embora as variáveis de ambiente sejam um bom começo, considere mecanismos de segurança mais avançados para o SharePoint, como o uso de tokens de acesso (OAuth 2.0) em vez de nome de usuário e senha diretos, ou um cofre de segredos (Key Vault) para gerenciar o acesso a credenciais.
+
+#FIM_ANALISE_CRITERIO#
+
+## Critério 7: Manuseio de Dados em Larga Escala: Detectar o carregamento de grandes volumes de dados (como arquivos ou resultados de consultas) diretamente para a memória. Recomendar a utilização de padrões como streaming para processamento de dados em partes (chunks).
+**Status:** Não Conforme
+**Confiança:** 0.90%
+
+O código apresenta várias instâncias onde grandes volumes de dados são carregados inteiramente para a memória, o que pode causar problemas de performance e estabilidade para entradas em larga escala.
+
+**Evidências do Código:**
+-   **Codificação de PDF para Base64:** Em `app/services/document/background_extraction_service.py`, o conteúdo de um arquivo PDF é lido na íntegra para a memória (`pdf_file.read()`) e depois codificado em base64. Para PDFs grandes, isso cria dois objetos de memória substanciais (os bytes brutos e a string base64), pressionando o coletor de lixo.
+    ```python
+    # app/services/document/background_extraction_service.py
+    with open(pdf_file_path, "rb") as pdf_file:
+        pdf_bytes = pdf_file.read() # <--- Carrega todo o PDF na memória
+        pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8') # <--- Cria uma string base64 grande
+    ```
+-   **Carregamento de PDF com `pdfplumber`:** O `PDFProcessor` em `app/services/ai/processors/pdf_processor.py` usa `pdfplumber.open(pdf_path)`. A biblioteca `pdfplumber` carrega o arquivo PDF completo na memória para permitir a extração de texto e tabelas. Embora eficaz para documentos de tamanho moderado, torna-se um gargalo para PDFs muito grandes.
+    ```python
+    # app/services/ai/processors/pdf_processor.py
+    with pdfplumber.open(pdf_path) as pdf: # <--- PDF inteiro carregado
+        # ... processamento de páginas
+    ```
+-   **Conversão de PDF para Imagens:** O `OCRService` em `app/services/ai/processors/ocr_service.py` utiliza `pdf2image.convert_from_path`. Esta função converte cada página do PDF em uma imagem (objeto PIL.Image), que é então processada. Para PDFs com muitas páginas ou páginas complexas e de alta resolução (devido ao `dpi=300` configurado), isso pode gerar muitos objetos de imagem grandes na memória simultaneamente, antes que possam ser salvos e o espaço liberado.
+    ```python
+    # app/services/ai/processors/ocr_service.py
+    images = convert_from_path(pdf_path, dpi=self.config.dpi) # <--- Múltiplas imagens em memória
+    ```
+-   **Carregamento de Planilhas Excel com `openpyxl`:** Em `app/services/ai/domain/excel_service.py`, a função `update_report` utiliza `openpyxl.load_workbook(temp_path)`. Esta função carrega a planilha Excel inteira na memória. Para planilhas com muitos dados, células ou formatação complexa, isso pode consumir uma quantidade significativa de RAM.
+    ```python
+    # app/services/ai/domain/excel_service.py
+    workbook = load_workbook(temp_path) # <--- Carrega a planilha inteira na memória
+    ```
+-   **Processamento de Texto OCR:** Embora o OCR seja feito página a página, o `full_text` em `OCRService.process_images` acumula o texto de todas as páginas em uma única string na memória antes de aplicar correções. Para documentos com muitas páginas, essa string pode se tornar muito grande.
+
+**Recomendações:**
+-   **Streaming para Base64:** Para a codificação de PDFs em base64, implemente uma solução de streaming. Em vez de `pdf_file.read()`, leia o arquivo em blocos (`chunks`) e codifique cada bloco sequencialmente, enviando-o para o cliente ou para um buffer de saída sem carregar o arquivo completo na memória.
+-   **Processamento de PDF Página a Página (se possível):** Se `pdfplumber` e `pdf2image` forem os únicos caminhos viáveis, tente processar as páginas uma a uma, liberando os recursos de cada página antes de passar para a próxima, se a lógica de negócio permitir. Para `pdf2image`, considere processar o retorno de `convert_from_path` de forma mais lazily ou salvando as imagens imediatamente após a conversão para reduzir o pico de memória.
+-   **Processamento de Excel em Streaming/Leitura Otimizada:** Para planilhas grandes, explore o modo `read_only` do `openpyxl` se apenas a leitura for necessária, ou bibliotecas como `pyxlsb` que são mais eficientes em memória. Se a modificação for essencial, avalie se é possível processar os dados em iterações (linha por linha) em vez de carregar a planilha inteira.
+-   **Análise de Perfil de Memória:** Utilize ferramentas de perfilamento de memória (como `memory_profiler` ou `tracemalloc` em Python) para identificar os pontos exatos de maior consumo de memória e validar a eficácia das otimizações.
+
+#FIM_ANALISE_CRITERIO#
+
+## Critério 8: Condições de Corrida em Persistência: Identificar padrões de "leitura-seguida-de-escrita" em operações de banco de dados que podem introduzir inconsistências de dados devido à concorrência, sugerindo o uso de transações ou operações atômicas.
+**Status:** Não Conforme
+**Confiança:** 0.70%
+
+O código fornecido não apresenta interações diretas com bancos de dados relacionais ou NoSQL que tipicamente exigem transações ou operações atômicas para mitigar condições de corrida em padrões de "leitura-seguida-de-escrita". No entanto, há interações com sistemas de arquivos locais e SharePoint que, embora menos suscetíveis a inconsistências de dados no mesmo nível que bancos de dados, podem ter seus próprios desafios de concorrência.
+
+**Evidências do Código e Análise:**
+-   **Operações de Arquivo Local:**
+    -   A criação de arquivos Excel e PDF (`ExcelService.update_report`, `pdf_service.convert_excel_to_pdf_with_validation`) geralmente envolve a escrita em um novo arquivo ou a sobrescrita de um arquivo existente. O padrão de criar um arquivo temporário e depois movê-lo/salvá-lo para o destino final (`tempfile.NamedTemporaryFile` em `ExcelService`) é uma boa prática para garantir que o arquivo final esteja completo e consistente, minimizando a janela de tempo em que um arquivo parcial poderia ser lido.
+    -   As operações de cleanup (`BackgroundTaskManager._cleanup_files`, `FileManager.cleanup_images`) envolvem a remoção de arquivos. Embora não seja um "leitura-seguida-de-escrita" típico, operações concorrentes de leitura e exclusão podem levar a erros (`FileNotFoundError` ou `PermissionError`) se o arquivo estiver sendo acessado por outra parte do sistema. O `time.sleep` em `_cleanup_files` é uma heurística para mitigar uma race condition específica (FastAPI `FileResponse` ainda lendo o arquivo enquanto ele é deletado), mas não é uma solução transacional.
+-   **Interação com SharePoint:**
+    -   O `sharepoint_service.py` realiza o upload de arquivos para o SharePoint.
+    ```python
+    # app/services/sharepoint_service.py
+    with open(file_name, 'rb') as file_content:
+        target_folder.upload_file(file_name, file_content.read())
+        ctx.execute_query()
+    ```
+    O upload de um arquivo para o SharePoint é uma operação de escrita. Se múltiplos processos tentarem fazer upload do mesmo `file_name` para o mesmo `target_folder` simultaneamente, o SharePoint provavelmente gerenciará a concorrência (ex: sobrescrevendo o arquivo, versionamento ou retornando um erro de conflito), mas o código cliente não possui lógica explícita para lidar com essas condições de corrida em nível de aplicação (ex: retry com backoff, bloqueio otimista). A ausência de um mecanismo de "leitura-seguida-de-escrita" (como verificar a existência do arquivo e depois decidir sobrescrever) reduz o risco de inconsistência *por parte da aplicação*, delegando a responsabilidade ao SharePoint.
+
+**Ausência de Transações de Banco de Dados:**
+Dado que não há código de interação com bancos de dados, não é possível avaliar a aplicação de transações ou operações atômicas nesse contexto.
+
+**Recomendações:**
+-   **Monitoramento e Testes de Concorrência para Arquivos:** Embora não haja um problema óbvio de "leitura-seguida-de-escrita" que exija transações de banco de dados, é crucial realizar testes de carga e concorrência para as operações de arquivo (criação, leitura, exclusão) e upload para o SharePoint. Isso ajudará a identificar quaisquer problemas de bloqueio, erros de permissão ou inconsistências que possam surgir sob alta concorrência.
+-   **Estratégias de Resolução de Conflitos no SharePoint:** Para uploads no SharePoint, se a concorrência for uma preocupação e se a sobrescrita não for sempre o comportamento desejado, considere implementar lógica para:
+    -   Verificar a existência do arquivo antes de fazer upload.
+    -   Usar versionamento de arquivos no SharePoint.
+    -   Implementar um retry com backoff exponencial em caso de falhas de concorrência reportadas pelo SharePoint.
+-   **Bloqueio de Arquivos (Opcional):** Para arquivos locais que podem ser acessados concorrentemente por diferentes processos ou threads, considere o uso de mecanismos de bloqueio de arquivos (ex: `fcntl` no Linux, `msvcrt.locking` no Windows) para operações críticas de "leitura-seguida-de-escrita", se houver. No entanto, é importante pesar o custo-benefício, pois isso pode introduzir complexidade e potenciais deadlocks.
+-   **Documentar Comportamento de Concorrência:** Documente o comportamento esperado das operações de arquivo e SharePoint sob concorrência, e as estratégias de mitigação implementadas (ou por que não são necessárias).
+
+#FIM_ANALISE_CRITERIO#
+
+## Critério 9: Validação de Entradas: Verificar se os pontos de entrada da aplicação que recebem dados, especialmente arquivos, possuem validações, filtros de tipo e limites de tamanho para mitigar riscos de segurança. Analisar se objetos de transferência de dados (DTOs) são utilizados com bibliotecas de validação para garantir a integridade e o formato dos dados.
+**Status:** Parcialmente Conforme
+**Confiança:** 0.85%
+
+O código demonstra boas práticas de validação de entradas, especialmente para arquivos, mas há oportunidades de aprimoramento no uso de DTOs para dados JSON.
+
+**Pontos Positivos:**
+-   **Validação Robusta de Arquivos PDF (`PDFUploadService`):** A classe `PDFUploadService` implementa uma validação exemplar para arquivos PDF. Ela não se baseia apenas no `Content-Type` (que pode ser falsificado), mas também verifica os "magic numbers" (`%PDF`) no início do arquivo, o que é uma medida de segurança muito eficaz para garantir que o arquivo é realmente um PDF.
+    ```python
+    # app/services/document/pdf_upload_service.py
+    def validate_pdf_file(self, file: UploadFile) -> bool:
+        if not file.filename or not file.filename.endswith(".pdf"):
+            return False
+        if file.content_type != "application/pdf":
+            return False
+        try:
+            current_pos = file.file.tell()
+            file.file.seek(0)
+            magic_bytes = file.file.read(4)
+            file.file.seek(current_pos)
+            return magic_bytes.startswith(b'%PDF')
+        except Exception as e:
+            print(f"[SEGURANÇA] Erro na validação de magic numbers: {e}")
+            return False
+    ```
+-   **Sanitização de LPCO (`DataExtractionService`, `pdf_name_formatter`):** O código sanitiza o código LPCO removendo caracteres não alfanuméricos, o que é importante para evitar problemas ao usar o LPCO em nomes de arquivos ou caminhos.
+    ```python
+    # app/services/document/data_extraction_service.py
+    def sanitize_lpco(self, lpco: str) -> str:
+        return "".join(c for c in lpco if c.isalnum())
+    ```
+    Essa sanitização é usada em `format_pdf_name` em `app/utils/pdf_name_formatter.py`.
+-   **Validação de Dados de Relatório (`ReportGenerationService`):** O `ReportGenerationService` inclui um método `validate_input_data` que verifica a presença e não-vazio de `lpco`, `chem_data` e `sec_data`.
+    ```python
+    # app/services/document/report_generation_service.py
+    def validate_input_data(self, lpco: str, chem_data: str, sec_data: str) -> bool:
+        if not lpco or not lpco.strip(): return False
+        if not chem_data or not sec_data: return False
+        return True
+    ```
+-   **Validação de Caminho de Excel (`pdf_service.py`):** A função `convert_excel_to_pdf_with_validation` valida a existência do arquivo e sua extensão.
+    ```python
+    # app/services/pdf_service.py
+    if not excel_path.exists():
+        raise ValueError(f"Arquivo Excel não encontrado: {excel_path}")
+    if excel_path.suffix.lower() != '.xlsx':
+        raise ValueError(f"Arquivo deve ter extensão .xlsx: {excel_path}")
+    ```
+
+**Pontos de Melhoria:**
+-   **Uso de DTOs Pydantic:** Os controladores recebem `chem_data` e `sec_data` como `str` (no caso de `ReportController.generate_report`) ou `Dict[str, Any]` (no caso de `ExtractionController.extract_data`). Para `Dict[str, Any]`, o FastAPI não realiza validação estrutural automática. A ausência de DTOs Pydantic (que seriam automaticamente validados pelo FastAPI) nos pontos de entrada da API para esses dados JSON significa que a validação da estrutura e dos tipos de dados dentro desses dicionários é feita manualmente ou inferida em camadas mais profundas (ex: `DataExtractionService.validate_extracted_data`). Isso perde os benefícios da validação automática, geração de documentação OpenAPI e tipagem forte que o Pydantic oferece.
+    -   Exemplo em `app/controller/report_controller.py`:
+        ```python
+        def generate_report(
+            self,
+            lpco: str,
+            chem_data: str, # <--- Recebe como string, o que exige desserialização manual
+            sec_data: str,  # <--- Recebe como string
+            background_tasks: BackgroundTasks
+        ) -> FileResponse:
+            # ...
+            # A desserialização e validação da estrutura de chem_data/sec_data
+            # é feita implicitamente ou em camadas de serviço.
+            # Idealmente, seriam DTOs Pydantic.
+        ```
+-   **Limites de Tamanho de Payload (Arquivos):** Embora a validação de tipo de arquivo seja boa, não há um limite de tamanho de arquivo explícito configurado para os uploads de `UploadFile` (como `laudo_file`). Isso é uma medida de segurança importante para prevenir ataques de negação de serviço (DoS) ou consumo excessivo de recursos.
+-   **Validação Detalhada do Conteúdo JSON:** O `PromptTemplate.REPORT_JSON_STRUCTURE` e `STRUCTURE_OUTPUT_PATTERN` definem a estrutura esperada do JSON. No entanto, a validação de que os dados extraídos (que chegam como `Dict[str, Any]`) realmente aderem a essa estrutura e aos tipos esperados é feita de forma mais ad-hoc (`_validate_response` em `BaseAIProvider`). O uso de Pydantic para definir esses esquemas e validar os dados de IA seria mais robusto.
+
+**Recomendações:**
+-   **Introduzir DTOs Pydantic:** Defina DTOs Pydantic para as estruturas `informacoes_gerais` e `parametros_quimicos` (baseadas em `PromptTemplate.REPORT_JSON_STRUCTURE`). Use esses DTOs como tipos de entrada nos controladores (`chem_data: ChemicalDataDTO`, `sec_data: SecondaryDataDTO`). Isso habilitará a validação automática do FastAPI, tipagem forte e geração de documentação de API.
+-   **Configurar Limites de Tamanho de Upload:** Adicione limites de tamanho de arquivo para `UploadFile` no FastAPI. Isso pode ser feito no nível do servidor Uvicorn ou através de um middleware customizado no FastAPI.
+-   **Validação Pydantic para Saídas de IA:** Use Pydantic para validar os dados retornados pelos provedores de IA e pelo `FallbackProcessor` contra os esquemas definidos. Isso garante que a aplicação interna sempre opere com dados bem-estruturados e tipados.
+
+#FIM_ANALISE_CRITERIO#
+
+## Critério 10: Acesso a Recursos do Sistema: Inspecionar o código que interage com o sistema de arquivos para identificar o uso de entradas do usuário na construção de caminhos, o que pode levar a vulnerabilidades de acesso indevido a arquivos (Path Traversal).
+**Status:** Conforme
+**Confiança:** 0.90%
+
+O código demonstra boas práticas na interação com o sistema de arquivos, utilizando métodos e classes que mitigam eficazmente as vulnerabilidades de Path Traversal.
+
+**Evidências do Código:**
+-   **Uso de `pathlib.Path` e `os.path.join`:** O código consistentemente utiliza `pathlib.Path` ou `os.path.join` para construir caminhos de arquivo, em vez de concatenação de strings. Ambos os métodos são intrinsecamente mais seguros contra Path Traversal, pois tratam corretamente separadores de diretório e componentes como `..` (que poderiam ser usados para escapar do diretório pretendido).
+    -   Exemplo em `app/services/pdf_service.py`:
+        ```python
+        # Converte para Path para manipulação consistente
+        excel_path = Path(excel_path)
+        # ...
+        output_dir = excel_path.parent
+        # ...
+        pdf_path = output_dir / f"{excel_path.stem}.pdf" # <--- Uso seguro de Path para junção
+        ```
+    -   Exemplo em `app/services/document/pdf_upload_service.py`:
+        ```python
+        file_path = os.path.join(self.upload_dir, laudo_pdf_name) # <--- Uso seguro de os.path.join
+        ```
+-   **Sanitização de Entradas do Usuário (`lpco`):** As entradas do usuário que são usadas para formar nomes de arquivo (como o `lpco`) são sanitizadas para conter apenas caracteres alfanuméricos. Isso remove qualquer caractere potencialmente malicioso que possa ser interpretado como um comando de diretório (`/`, `\`, `..`).
+    ```python
+    # app/utils/pdf_name_formatter.py
+    def format_pdf_name(lpco: str) -> str:
+        # ...
+        lpco_clean = "".join(c for c in lpco if c.isalnum()) # <--- Sanitização do LPCO
+        return f"{hoje}_{lpco_clean}"
+    ```
+-   **Resolução de Caminhos com `.resolve()`:** Em `app/services/pdf_service.py`, os caminhos são resolvidos para seus caminhos absolutos e canônicos (`excel_path.resolve()`, `output_dir.resolve()`) antes de serem passados para `subprocess.run`. Isso transforma qualquer caminho relativo ou com componentes `..` em um caminho absoluto limpo, prevenindo que um atacante possa usar esses componentes para acessar diretórios fora do esperado.
+    ```python
+    # app/services/pdf_service.py
+    excel_path_str = str(excel_path.resolve()) # <--- Resolução do caminho
+    output_dir_str = str(output_dir.resolve()) # <--- Resolução do caminho
+    command = [
+        libreoffice_cmd,
+        # ...
+        "--outdir", output_dir_str,
+        excel_path_str
+    ]
+    ```
+-   **`DirectoryManager` Centralizado:** A classe `DirectoryManager` (`app/services/ai/utils/directory_manager.py`) centraliza a criação e o acesso a diretórios, usando `pathlib.Path` e garantindo que os diretórios existam. Isso cria um ponto de controle único para todas as operações de caminho, facilitando a aplicação de políticas de segurança.
+    ```python
+    # app/services/ai/utils/directory_manager.py
+    class DirectoryManager(DirectoryManagerInterface):
+        # ...
+        def get_file_path(self, filename: str, directory_type: str = 'output') -> Path:
+            # ...
+            directory = self._directories[directory_type]
+            return directory / filename # <--- Uso seguro de Path para junção
+    ```
+
+**Recomendações:**
+-   Continuar a prática atual de usar `pathlib.Path` e `os.path.join` para construir e manipular caminhos de arquivo.
+-   Assegurar que todas as entradas do usuário que possam ser incorporadas a caminhos de arquivo ou nomes de arquivo sejam devidamente sanitizadas ou validadas.
+-   Manter o uso de `.resolve()` para caminhos que serão passados para comandos externos ou APIs do sistema de arquivos, especialmente quando há qualquer dúvida sobre a origem do caminho.
+
+#FIM_ANALISE_CRITERIO#
+
+## Critério 11: Tratamento de Erros: Sinalizar blocos de captura de exceção vazios ou que apenas registram o erro sem um tratamento adequado, pois eles podem ocultar falhas críticas de segurança ou de lógica de negócio.
+**Status:** Parcialmente Conforme
+**Confiança:** 0.80%
+
+O código demonstra um tratamento de erros razoavelmente abrangente, com o uso de `try...except` e exceções personalizadas. Há muitos pontos onde os erros são logados detalhadamente e, em alguns casos, re-lançados ou tratados de forma graciosa. No entanto, existem algumas instâncias onde o tratamento poderia ser mais explícito ou preventivo.
+
+**Pontos Positivos:**
+-   **Exceções Customizadas:** A definição de exceções específicas como `PDFConversionError`, `DocumentGenerationError`, `AIProviderError`, `ExcelServiceError` permite um tratamento de erro mais granular e semântico.
+-   **Logs Detalhados:** Em várias seções, como `BackgroundExtractionService._enviar_callback`, os erros HTTP e de conexão são logados com detalhes abrangentes (status code, response body, headers, tipo de erro, traceback), o que é excelente para depuração e monitoramento.
+    ```python
+    # app/services/document/background_extraction_service.py
+    except httpx.HTTPStatusError as e:
+        print(f"[BackgroundExtractionService] ❌ Erro HTTP no callback:")
+        print(f"[BackgroundExtractionService]    Status Code: {e.response.status_code}")
+        # ...
+    ```
+-   **Fallback e Resiliência:** O `AIServiceFacade` e o `OpenRouterProvider` implementam retry com backoff e fallback (`FallbackProcessor`), o que é uma forma robusta de lidar com falhas transitórias de serviços externos. O `FallbackProcessor` retorna estruturas vazias em caso de falha total da IA, evitando que a aplicação quebre, embora isso precise de monitoramento.
+-   **Cleanup em `finally`:** Em `BackgroundExtractionService.processar_extracao_completa` e `ExcelService.update_report`, o cleanup de arquivos temporários é feito em blocos `finally`, garantindo que seja tentado mesmo que ocorram erros no processamento principal.
+-   **Tratamento Gráfico para Cleanup:** Em `BackgroundTaskManager._cleanup_files`, os erros durante a remoção de arquivos são logados, mas o processo continua para os outros arquivos. Isso é um tratamento adequado para tarefas de background não críticas.
+
+**Pontos de Melhoria / Considerações:**
+-   **Capturas Genéricas e Re-lançamento:** Embora muitos `except Exception as e: print(...) raise` sejam usados, garantindo que o erro não seja engolido, algumas capturas genéricas poderiam ser mais específicas para diferentes tipos de exceção.
+    -   Em `app/utils/pdf_name_formatter.py` na função `extract_lpco_from_filename`:
+        ```python
+        except Exception as e:
+            raise ValueError(f"Erro ao extrair LPCO do arquivo {filename}: {str(e)}")
+        ```
+        Aqui, um `ValueError` é re-lançado, o que é razoável, mas a captura de `Exception` é muito ampla.
+    -   Em `app/services/pdf_service.py` na função `convert_excel_to_pdf_with_validation`:
+        ```python
+        except Exception as e:
+            raise PDFConversionError(f"Erro inesperado na conversão: {e}") from e
+        ```
+        A captura de `Exception` aqui é seguida por um re-lançamento de uma exceção mais específica, o que é aceitável, mas ainda pode mascarar erros inesperados que deveriam ser tratados de forma diferente.
+-   **Logs de Aviso em Vez de Erro em Alguns Casos:** Em `AIServiceFacade._safe_cleanup` e `PDFProcessor._process_hybrid` (quando volta para OCR tradicional), erros são impressos como "Aviso" ou "Falha", mas podem ser mais críticos dependendo do contexto. É importante diferenciar entre erros que devem ser investigados imediatamente e condições que são esperadas e recuperáveis.
+    ```python
+    # app/services/ai/facade.py
+    def _safe_cleanup(self, lpco: str) -> None:
+        try:
+            self.file_manager.cleanup_images(lpco)
+        except OSError as cleanup_error:
+            print(f"[Facade] Aviso: Falha na limpeza de arquivos temporários: {cleanup_error}")
+    ```
+    Neste caso, um `OSError` pode indicar um problema de permissão persistente ou um recurso travado, que deveria ser um `ERROR` nos logs para acionar alertas.
+-   **`try...except` com `pass` ou `print` sem `raise`:** Não foram encontrados blocos `except` vazios ou que apenas imprimem o erro sem re-lançar ou tomar uma ação corretiva significativa, o que é um bom sinal. A maioria dos `except` imprime e re-lança ou imprime e toma uma ação de fallback.
+
+**Recomendações:**
+-   **Refinar Capturas de Exceção:** Onde `except Exception as e:` é usado, tente ser mais específico (ex: `except ValueError as e:`, `except IOError as e:`). Isso torna o tratamento de erros mais robusto e garante que exceções inesperadas (que podem ser bugs ou falhas críticas) não sejam tratadas de forma inadequada.
+-   **Padronizar Logging:** Utilize uma biblioteca de logging padrão do Python (`logging`) em vez de `print()` para todas as mensagens. Isso permite configurar níveis de log (DEBUG, INFO, WARNING, ERROR, CRITICAL), destinos (console, arquivo, sistema de monitoramento) e formatos de mensagem de forma centralizada.
+-   **Monitoramento de Fallbacks:** Embora o fallback da IA seja uma boa estratégia, é crucial monitorar a frequência com que ele é ativado. Se o fallback for usado constantemente, isso pode indicar problemas com os provedores de IA primários que precisam ser investigados, e o log deveria refletir a gravidade dessa situação.
+
+#FIM_ANALISE_CRITERIO#
+
+## Critério 12: Consistência de Contratos de API: Analisar as saídas da aplicação para detectar rotas que retornam tipos de dados inconsistentes dependendo do fluxo de execução, o que viola o contrato da API e pode causar falhas em sistemas clientes.
+**Status:** Conforme
+**Confiança:** 0.90%
+
+O código geralmente mantém uma boa consistência nos contratos de API para suas saídas, o que é essencial para a robustez de sistemas clientes.
+
+**Evidências do Código:**
+-   **Retorno Consistente de Controladores:**
+    -   **`ExtractionController.extract_data`:** Sempre retorna um `Dict[str, Any]` com a estrutura `{"quimico": ..., "cabecalho": ...}` ou levanta uma `HTTPException`. Este é um contrato claro e consistente.
+    -   **`ReportController.generate_report`:** Sempre retorna um `FileResponse` ou levanta uma `HTTPException`. O tipo de retorno é fixo, independentemente do sucesso da geração do relatório (o PDF é retornado em caso de sucesso, e uma exceção em caso de falha).
+    -   **`PDFController.upload_pdf`:** Retorna `str` (o caminho do arquivo salvo) ou levanta `HTTPException`.
+-   **Contrato de Callback (`BackgroundExtractionService`):** A função `_enviar_callback` em `BackgroundExtractionService` envia um `payload` para uma URL de callback. Este `payload` tem um campo `status` (`"CONCLUIDO"` ou `"ERRO"`) e a estrutura do payload é consistente para ambos os casos, contendo `job_id` e `mensagem` (em caso de erro) ou `pdf_base64` e `dados_extraidos` (em caso de sucesso). Embora os campos adicionais variem, a presença do `status` e `job_id` permite que o cliente interprete a resposta de forma consistente.
+    ```python
+    # app/services/document/background_extraction_service.py
+    # Payload de sucesso
+    payload = {
+        "job_id": job_id,
+        "status": "CONCLUIDO",
+        "pdf_base64": pdf_base64,
+        "dados_extraidos": { "quimico": chem_data, "cabecalho": sec_data }
+    }
+    # Payload de erro
+    payload = {
+        "job_id": job_id,
+        "status": "ERRO",
+        "mensagem": mensagem_erro
+    }
+    ```
+-   **Estrutura JSON Definida para IA (`PromptTemplate`):** O `PromptTemplate` (`app/services/ai/providers/prompts.py`) define explicitamente a estrutura JSON esperada para os dados extraídos pela IA (`REPORT_JSON_STRUCTURE`). Isso serve como um contrato interno que os provedores de IA e o `FallbackProcessor` devem seguir, garantindo que a camada de serviço receba dados com uma estrutura previsível. A validação (`_validate_response` em `BaseAIProvider`) reforça esse contrato.
+
+A utilização de `HTTPException` para sinalizar erros HTTP com mensagens detalhadas é a forma padrão do FastAPI, e permite que os clientes tratem os erros de forma padronizada, sem que os endpoints retornem diferentes tipos de dados em caso de falha.
+
+**Recomendações:**
+-   **Documentação OpenAPI:** Garanta que todos os endpoints da API estejam bem documentados com esquemas OpenAPI, que são gerados automaticamente pelo FastAPI a partir das anotações de tipo. Isso torna o contrato da API explícito e fácil de consumir pelos clientes.
+-   **DTOs Pydantic para Payloads de Callback:** Para o payload de callback, considere definir dois DTOs Pydantic (um para sucesso e outro para erro) que herdem de um DTO base. Isso pode tornar a validação e a documentação do contrato de callback ainda mais robustas e explícitas.
+    ```python
+    # Exemplo de DTOs para callback
+    from pydantic import BaseModel
+    from typing import Literal, Dict, Any, Optional
+
+    class BaseCallbackPayload(BaseModel):
+        job_id: int
+        status: Literal["CONCLUIDO", "ERRO"]
+
+    class SuccessCallbackPayload(BaseCallbackPayload):
+        status: Literal["CONCLUIDO"] = "CONCLUIDO"
+        pdf_base64: str
+        dados_extraidos: Dict[str, Any]
+
+    class ErrorCallbackPayload(BaseCallbackPayload):
+        status: Literal["ERRO"] = "ERRO"
+        mensagem: str
+        
+    # O payload enviado seria então validado contra um desses DTOs.
+    ```
+-   **Consistência em `Dict[str, Any]`:** Embora `Dict[str, Any]` seja um tipo válido, onde for possível, substitua-o por DTOs Pydantic para obter validação de esquema, tipagem forte e documentação automática no contrato da API.
 
 #FIM_ANALISE_CRITERIO#
 
 ## Recomendações Gerais
-1. **Padronização de Logs:** Migrar de `print()` para `logging` em todos os serviços para melhorar a observabilidade em produção.
-2. **Refatoração de Arquivos Grandes:** O arquivo `app/services/ai/utils/excel/aplicar_formulas.py` é um gargalo de manutenção. Considere separar as funções de cálculo por domínio (ex: `formulas_esterois.py`, `formulas_acidos_graxos.py`).
-3. **Tipagem:** Embora o código use tipos (Type Hints), em alguns retornos complexos a adoção de `Pydantic` models ou `dataclasses` melhoraria a segurança de tipo e a documentação automática.
-4. **Testes:** Dado o alto nível de modularidade, a equipe deve focar em ampliar a cobertura de testes unitários, especialmente para a lógica de cálculo (Excel) e os processadores de fallback.
+1.  **Aprimorar Injeção de Dependência:** Revise a inicialização de dependências em todos os serviços. Em vez de instanciar diretamente (`self.dep = DepClass()`), injete-as via construtor com valores padrão para singletons (`__init__(self, dep: DepClass = None): self.dep = dep or get_dep_singleton()`). Isso melhora a testabilidade e a flexibilidade do código.
+2.  **Gerenciamento de Operações Bloqueantes:** Para operações de I/O síncronas e potencialmente longas (como `subprocess.run` e `time.sleep`) que são chamadas em contextos assíncronos (`async def`), utilize `starlette.concurrency.run_in_threadpool` ou `asyncio.to_thread` para executá-las em um thread pool separado. Isso evita o bloqueio do loop de eventos principal do FastAPI e melhora a responsividade da API.
+3.  **Otimização de Memória para Grandes Volumes de Dados:**
+    *   Implemente streaming para a codificação de PDFs em base64, lendo o arquivo em chunks em vez de carregá-lo completamente na memória.
+    *   Explore modos de leitura de Excel mais eficientes em memória (ex: `read_only` do `openpyxl` ou bibliotecas como `pyxlsb`) se a modificação não for necessária. Se a modificação for essencial, tente processar os dados em iterações.
+    *   Avalie alternativas para `pdfplumber` e `pdf2image` que ofereçam maior controle sobre o consumo de memória para PDFs muito grandes, ou otimize o processamento página a página para liberar recursos mais rapidamente.
+4.  **Uso Consistente de DTOs Pydantic:** Defina DTOs Pydantic para todas as entradas e saídas de dados JSON nos controladores e payloads de callback. Isso garante validação automática, tipagem forte, documentação OpenAPI e melhora a clareza do contrato da API.
+5.  **Padronização de Logging:** Migre todas as chamadas `print()` para a biblioteca de logging padrão do Python (`logging`). Isso permite configurar níveis de log, destinos (console, arquivo, sistema de monitoramento) e formatos de forma centralizada e controlada.
+6.  **Refinamento do Tratamento de Exceções:** Onde capturas genéricas (`except Exception as e:`) são usadas, tente ser mais específico. Isso ajuda a identificar bugs reais e a tratar exceções esperadas de forma mais precisa, evitando que erros críticos sejam mascarados.
+7.  **Fechamento Gracioso de Recursos:** Implemente `lifespan events` no FastAPI para garantir o fechamento gracioso de clientes HTTP (`httpx.AsyncClient`) e outros recursos de longa duração quando a aplicação é encerrada.
+8.  **Segurança de Credenciais:** Embora as variáveis de ambiente sejam um bom começo, considere o uso de tokens de acesso (OAuth 2.0) ou um cofre de segredos (Key Vault) para o SharePoint e outros serviços externos, em vez de nome de usuário e senha diretos, para fortalecer a segurança.
 
 #FIM#

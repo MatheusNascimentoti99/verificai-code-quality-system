@@ -51,3 +51,4 @@ storybook-static/
 
 # TypeScript
 *.tsbuildinfo
+.vercel

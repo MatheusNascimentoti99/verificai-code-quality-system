@@ -1,10 +1,10 @@
 ================================================================================
-LTIMO PROMPT ENVIADO PARA LLM - 2026-05-12T17:24:02.333810
+LTIMO PROMPT ENVIADO PARA LLM - 2026-05-13T16:42:32.755375
 ================================================================================
 
-TAMANHO TOTAL: 405444 caracteres
+TAMANHO TOTAL: 416573 caracteres
 ARQUIVOS PROCESSADOS: 53
-CRITRIOS: 2
+CRITRIOS: 12
 USURIO: admin (ID: 1)
 
 ================================================================================
@@ -20,20 +20,80 @@ Esta tag é ESSENCIAL para garantir que a análise completa seja capturada pelo 
 NÃO trunc suas respostas - forneça análises detalhadas e completas.
 
 ### CRITÉRIOS PARA ANÁLISE:
-## Critério 1: Código segue boas práticas e padrões de codificação
+## Critério 1: Princípios SOLID: Analisar a aplicação de princípios de design consolidados, como a Responsabilidade Única - SRP (evitando componentes que acumulam funções díspares) como controllers com múltiplos endpoints e a Inversão de Dependência (favorecendo o uso de mecanismos de injeção de dependência em vez da instanciação manual de componentes) como a instanciação manual de dependências em vez de usar a injeção padrão do NestJS
 
-Avalie este critério especificamente usando o nome exato: "Código segue boas práticas e padrões de codificação"
+Avalie este critério especificamente usando o nome exato: "Princípios SOLID: Analisar a aplicação de princípios de design consolidados, como a Responsabilidade Única - SRP (evitando componentes que acumulam funções díspares) como controllers com múltiplos endpoints e a Inversão de Dependência (favorecendo o uso de mecanismos de injeção de dependência em vez da instanciação manual de componentes) como a instanciação manual de dependências em vez de usar a injeção padrão do NestJS"
 
 ---
 
-## Critério 2: Variáveis e funções têm nomes descritivos e significativos
+## Critério 2: Acoplamento a Frameworks: Detectar o uso de funcionalidades que acoplam o código a implementações específicas do framework (ex: uso de @Res() do Express no NestJS), o que dificulta a manutenção e a aplicação de interceptors e pipes globais.
 
-Avalie este critério especificamente usando o nome exato: "Variáveis e funções têm nomes descritivos e significativos"
+Avalie este critério especificamente usando o nome exato: "Acoplamento a Frameworks: Detectar o uso de funcionalidades que acoplam o código a implementações específicas do framework (ex: uso de @Res() do Express no NestJS), o que dificulta a manutenção e a aplicação de interceptors e pipes globais."
+
+---
+
+## Critério 3: Violação de Camadas: Identificar se a lógica de negócio está incorretamente localizada em camadas de interface (como controladores de API), em vez de residir em camadas de serviço ou domínio dedicadas.
+
+Avalie este critério especificamente usando o nome exato: "Violação de Camadas: Identificar se a lógica de negócio está incorretamente localizada em camadas de interface (como controladores de API), em vez de residir em camadas de serviço ou domínio dedicadas."
+
+---
+
+## Critério 4: Pressão sobre a Memória: Analisar rotinas e laços que criam um volume excessivo de objetos de curta duração, pressionando o coletor de lixo (Garbage Collector) e causando pausas desnecessárias na aplicação. Avaliar se objetos poderiam ser reutilizados para otimizar o uso da memória.
+
+Avalie este critério especificamente usando o nome exato: "Pressão sobre a Memória: Analisar rotinas e laços que criam um volume excessivo de objetos de curta duração, pressionando o coletor de lixo (Garbage Collector) e causando pausas desnecessárias na aplicação. Avaliar se objetos poderiam ser reutilizados para otimizar o uso da memória."
+
+---
+
+## Critério 5: Ciclo de Vida de Recursos Externos: Verificar se recursos externos, como arquivos temporários ou conexões de rede, são liberados de forma determinística em todos os fluxos de execução (sucesso, erro e finalização), evitando vazamentos de recursos.
+
+Avalie este critério especificamente usando o nome exato: "Ciclo de Vida de Recursos Externos: Verificar se recursos externos, como arquivos temporários ou conexões de rede, são liberados de forma determinística em todos os fluxos de execução (sucesso, erro e finalização), evitando vazamentos de recursos."
+
+---
+
+## Critério 6: Operações de I/O Bloqueantes ou Inseguras: Inspecionar chamadas de rede e outras operações de entrada/saída para garantir a configuração de tempos limite (timeouts) e limites de tamanho de payload, prevenindo que a aplicação fique bloqueada ou vulnerável a sobrecargas.
+
+Avalie este critério especificamente usando o nome exato: "Operações de I/O Bloqueantes ou Inseguras: Inspecionar chamadas de rede e outras operações de entrada/saída para garantir a configuração de tempos limite (timeouts) e limites de tamanho de payload, prevenindo que a aplicação fique bloqueada ou vulnerável a sobrecargas."
+
+---
+
+## Critério 7: Manuseio de Dados em Larga Escala: Detectar o carregamento de grandes volumes de dados (como arquivos ou resultados de consultas) diretamente para a memória. Recomendar a utilização de padrões como streaming para processamento de dados em partes (chunks).
+
+Avalie este critério especificamente usando o nome exato: "Manuseio de Dados em Larga Escala: Detectar o carregamento de grandes volumes de dados (como arquivos ou resultados de consultas) diretamente para a memória. Recomendar a utilização de padrões como streaming para processamento de dados em partes (chunks)."
+
+---
+
+## Critério 8: Condições de Corrida em Persistência: Identificar padrões de "leitura-seguida-de-escrita" em operações de banco de dados que podem introduzir inconsistências de dados devido à concorrência, sugerindo o uso de transações ou operações atômicas.
+
+Avalie este critério especificamente usando o nome exato: "Condições de Corrida em Persistência: Identificar padrões de "leitura-seguida-de-escrita" em operações de banco de dados que podem introduzir inconsistências de dados devido à concorrência, sugerindo o uso de transações ou operações atômicas."
+
+---
+
+## Critério 9: Validação de Entradas: Verificar se os pontos de entrada da aplicação que recebem dados, especialmente arquivos, possuem validações, filtros de tipo e limites de tamanho para mitigar riscos de segurança. Analisar se objetos de transferência de dados (DTOs) são utilizados com bibliotecas de validação para garantir a integridade e o formato dos dados.
+
+Avalie este critério especificamente usando o nome exato: "Validação de Entradas: Verificar se os pontos de entrada da aplicação que recebem dados, especialmente arquivos, possuem validações, filtros de tipo e limites de tamanho para mitigar riscos de segurança. Analisar se objetos de transferência de dados (DTOs) são utilizados com bibliotecas de validação para garantir a integridade e o formato dos dados."
+
+---
+
+## Critério 10: Acesso a Recursos do Sistema: Inspecionar o código que interage com o sistema de arquivos para identificar o uso de entradas do usuário na construção de caminhos, o que pode levar a vulnerabilidades de acesso indevido a arquivos (Path Traversal).
+
+Avalie este critério especificamente usando o nome exato: "Acesso a Recursos do Sistema: Inspecionar o código que interage com o sistema de arquivos para identificar o uso de entradas do usuário na construção de caminhos, o que pode levar a vulnerabilidades de acesso indevido a arquivos (Path Traversal)."
+
+---
+
+## Critério 11: Tratamento de Erros: Sinalizar blocos de captura de exceção vazios ou que apenas registram o erro sem um tratamento adequado, pois eles podem ocultar falhas críticas de segurança ou de lógica de negócio.
+
+Avalie este critério especificamente usando o nome exato: "Tratamento de Erros: Sinalizar blocos de captura de exceção vazios ou que apenas registram o erro sem um tratamento adequado, pois eles podem ocultar falhas críticas de segurança ou de lógica de negócio."
+
+---
+
+## Critério 12: Consistência de Contratos de API: Analisar as saídas da aplicação para detectar rotas que retornam tipos de dados inconsistentes dependendo do fluxo de execução, o que viola o contrato da API e pode causar falhas em sistemas clientes.
+
+Avalie este critério especificamente usando o nome exato: "Consistência de Contratos de API: Analisar as saídas da aplicação para detectar rotas que retornam tipos de dados inconsistentes dependendo do fluxo de execução, o que viola o contrato da API e pode causar falhas em sistemas clientes."
 
 ---
 
 #
-CRÍTICO: Esta análise deve conter exatamente 2 critérios de avaliação.
+CRÍTICO: Esta análise deve conter exatamente 12 critérios de avaliação.
 - Use exatamente os nomes dos critérios fornecidos acima
 - NÃO modifique os nomes dos critérios
 - NÃO invente critérios adicionais
@@ -10757,6 +10817,156 @@ Esta tag marca o fim completo da análise do critério acima.
 
 
 ## Critério 2: [Nome do critério]
+**Status:** [Conforme/Parcialmente Conforme/Não Conforme]
+**Confiança:** [X.X]%
+
+[Avaliação detalhada com evidências do código]
+
+**Recomendações:**
+- [Lista de recomendações específicas]
+
+**IMPORTANTE: Ao finalizar a análise deste critério, inclua EXATAMENTE a tag: #FIM_ANALISE_CRITERIO#**
+Esta tag marca o fim completo da análise do critério acima.
+
+#FIM_ANALISE_CRITERIO#
+
+
+## Critério 3: [Nome do critério]
+**Status:** [Conforme/Parcialmente Conforme/Não Conforme]
+**Confiança:** [X.X]%
+
+[Avaliação detalhada com evidências do código]
+
+**Recomendações:**
+- [Lista de recomendações específicas]
+
+**IMPORTANTE: Ao finalizar a análise deste critério, inclua EXATAMENTE a tag: #FIM_ANALISE_CRITERIO#**
+Esta tag marca o fim completo da análise do critério acima.
+
+#FIM_ANALISE_CRITERIO#
+
+
+## Critério 4: [Nome do critério]
+**Status:** [Conforme/Parcialmente Conforme/Não Conforme]
+**Confiança:** [X.X]%
+
+[Avaliação detalhada com evidências do código]
+
+**Recomendações:**
+- [Lista de recomendações específicas]
+
+**IMPORTANTE: Ao finalizar a análise deste critério, inclua EXATAMENTE a tag: #FIM_ANALISE_CRITERIO#**
+Esta tag marca o fim completo da análise do critério acima.
+
+#FIM_ANALISE_CRITERIO#
+
+
+## Critério 5: [Nome do critério]
+**Status:** [Conforme/Parcialmente Conforme/Não Conforme]
+**Confiança:** [X.X]%
+
+[Avaliação detalhada com evidências do código]
+
+**Recomendações:**
+- [Lista de recomendações específicas]
+
+**IMPORTANTE: Ao finalizar a análise deste critério, inclua EXATAMENTE a tag: #FIM_ANALISE_CRITERIO#**
+Esta tag marca o fim completo da análise do critério acima.
+
+#FIM_ANALISE_CRITERIO#
+
+
+## Critério 6: [Nome do critério]
+**Status:** [Conforme/Parcialmente Conforme/Não Conforme]
+**Confiança:** [X.X]%
+
+[Avaliação detalhada com evidências do código]
+
+**Recomendações:**
+- [Lista de recomendações específicas]
+
+**IMPORTANTE: Ao finalizar a análise deste critério, inclua EXATAMENTE a tag: #FIM_ANALISE_CRITERIO#**
+Esta tag marca o fim completo da análise do critério acima.
+
+#FIM_ANALISE_CRITERIO#
+
+
+## Critério 7: [Nome do critério]
+**Status:** [Conforme/Parcialmente Conforme/Não Conforme]
+**Confiança:** [X.X]%
+
+[Avaliação detalhada com evidências do código]
+
+**Recomendações:**
+- [Lista de recomendações específicas]
+
+**IMPORTANTE: Ao finalizar a análise deste critério, inclua EXATAMENTE a tag: #FIM_ANALISE_CRITERIO#**
+Esta tag marca o fim completo da análise do critério acima.
+
+#FIM_ANALISE_CRITERIO#
+
+
+## Critério 8: [Nome do critério]
+**Status:** [Conforme/Parcialmente Conforme/Não Conforme]
+**Confiança:** [X.X]%
+
+[Avaliação detalhada com evidências do código]
+
+**Recomendações:**
+- [Lista de recomendações específicas]
+
+**IMPORTANTE: Ao finalizar a análise deste critério, inclua EXATAMENTE a tag: #FIM_ANALISE_CRITERIO#**
+Esta tag marca o fim completo da análise do critério acima.
+
+#FIM_ANALISE_CRITERIO#
+
+
+## Critério 9: [Nome do critério]
+**Status:** [Conforme/Parcialmente Conforme/Não Conforme]
+**Confiança:** [X.X]%
+
+[Avaliação detalhada com evidências do código]
+
+**Recomendações:**
+- [Lista de recomendações específicas]
+
+**IMPORTANTE: Ao finalizar a análise deste critério, inclua EXATAMENTE a tag: #FIM_ANALISE_CRITERIO#**
+Esta tag marca o fim completo da análise do critério acima.
+
+#FIM_ANALISE_CRITERIO#
+
+
+## Critério 10: [Nome do critério]
+**Status:** [Conforme/Parcialmente Conforme/Não Conforme]
+**Confiança:** [X.X]%
+
+[Avaliação detalhada com evidências do código]
+
+**Recomendações:**
+- [Lista de recomendações específicas]
+
+**IMPORTANTE: Ao finalizar a análise deste critério, inclua EXATAMENTE a tag: #FIM_ANALISE_CRITERIO#**
+Esta tag marca o fim completo da análise do critério acima.
+
+#FIM_ANALISE_CRITERIO#
+
+
+## Critério 11: [Nome do critério]
+**Status:** [Conforme/Parcialmente Conforme/Não Conforme]
+**Confiança:** [X.X]%
+
+[Avaliação detalhada com evidências do código]
+
+**Recomendações:**
+- [Lista de recomendações específicas]
+
+**IMPORTANTE: Ao finalizar a análise deste critério, inclua EXATAMENTE a tag: #FIM_ANALISE_CRITERIO#**
+Esta tag marca o fim completo da análise do critério acima.
+
+#FIM_ANALISE_CRITERIO#
+
+
+## Critério 12: [Nome do critério]
 **Status:** [Conforme/Parcialmente Conforme/Não Conforme]
 **Confiança:** [X.X]%
 

@@ -118,3 +118,5 @@ target/
 Testes_temporarios/
 uploads/
 
+# Vercel
+.vercel/

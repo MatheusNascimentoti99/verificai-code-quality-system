@@ -51,6 +51,7 @@ if settings.ENVIRONMENT == "production":
     cors_origins = [
         "https://verificai-code-quality-system-front.vercel.app",
         "https://verificai.vercel.app",
+        "https://frontend-eight-psi-84.vercel.app",
     ] + settings.BACKEND_CORS_ORIGINS
 else:
     cors_origins = ["*"]
