@@ -11,6 +11,9 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     """Application settings with environment variable support"""
 
+    # Default password for demo purposes only. Change in production!
+    ADMIN_PASSWORD: str = Field(default="Admin@2024", env="ADMIN_PASSWORD")  
+    
     # Project Information
     PROJECT_NAME: str = "VerificAI Code Quality System"
     VERSION: str = "1.0.0"
