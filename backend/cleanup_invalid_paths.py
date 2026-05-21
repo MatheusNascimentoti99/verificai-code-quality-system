@@ -13,6 +13,7 @@ from app.core.database import get_db
 from app.models.file_path import FilePath
 from app.models.uploaded_file import UploadedFile
 from pathlib import Path
+from app.core.config import settings
 
 def cleanup_invalid_paths():
     """Remove file paths que não correspondem a arquivos reais"""
@@ -40,9 +41,8 @@ def cleanup_invalid_paths():
             # Tentar diferentes caminhos possíveis
             possible_paths = [
                 fp.full_path,
-                f"uploads/{fp.full_path}",
-                f"/app/uploads/{fp.full_path}",
-                f"/app/{fp.full_path}",
+                settings.UPLOADS_DIR / fp.full_path,  # Verificar no diretório de uploads
+                Path(settings.UPLOADS_DIR) / Path(fp.full_path).name  # Verificar apenas o nome do arquivo no diretório de uploads
             ]
 
             for path in possible_paths:
