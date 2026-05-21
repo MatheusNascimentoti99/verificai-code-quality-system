@@ -24,6 +24,7 @@ from app.schemas.analysis import AnalysisCreate, AnalysisResponse
 from app.api.v1.analysis import process_analysis
 from app.services.prompt_service import get_prompt_service
 from app.services.llm_service import llm_service
+from app.services.storage_provider import get_storage_provider
 
 router = APIRouter()
 
@@ -35,20 +36,25 @@ def get_uploaded_file_path(file_path: str, db: Session, user_id: int) -> str:
     try:
         print(f"DEBUG: get_uploaded_file_path called with: file_path='{file_path}', user_id={user_id}")
 
-        # Helper function to find the most recent file that exists on disk
+        # Helper function to find the most recent uploaded file.
+        # Local files are validated on disk; blob URLs are accepted as-is.
         def find_most_recent_existing(files_query):
             # Order by created_at descending to get most recent first
             files = files_query.order_by(UploadedFile.created_at.desc()).all()
 
             for uploaded_file in files:
                 import os
-                # Use storage_path which contains the full path to the file
-                full_disk_path = uploaded_file.storage_path
-                if os.path.exists(full_disk_path):
-                    print(f"DEBUG: Found existing file: {uploaded_file.original_name} at {full_disk_path} from {uploaded_file.created_at}")
-                    return uploaded_file, full_disk_path
+                # Use storage_path for both local and blob storage.
+                file_locator = uploaded_file.storage_path
+                if str(file_locator).startswith("http://") or str(file_locator).startswith("https://"):
+                    print(f"DEBUG: Found blob file: {uploaded_file.original_name} at {file_locator} from {uploaded_file.created_at}")
+                    return uploaded_file, file_locator
+
+                if os.path.exists(file_locator):
+                    print(f"DEBUG: Found existing local file: {uploaded_file.original_name} at {file_locator} from {uploaded_file.created_at}")
+                    return uploaded_file, file_locator
                 else:
-                    print(f"DEBUG: File not found on disk: {full_disk_path}")
+                    print(f"DEBUG: File not found on disk: {file_locator}")
 
             return None, None
 
@@ -732,6 +738,7 @@ async def analyze_selected_criteria(
         # Get prompt service
         print("DEBUG: Getting prompt service...")
         prompt_service = get_prompt_service(db)
+        storage = get_storage_provider()
 
         # Step 1: Read the general prompt from database (CORRECTED TO USE PROMPT ID 4)
         print("DEBUG: Getting general prompt from database...")
@@ -829,12 +836,11 @@ async def analyze_selected_criteria(
 
                         # Try to find the uploaded file and get its real storage path
                         actual_file_path = get_uploaded_file_path(source_file_path, db, current_user.id)
-                        print(f"DEBUG: Actual file path to read: {actual_file_path}")
+                        print(f"DEBUG: Actual file locator to read: {actual_file_path}")
 
-                        with open(actual_file_path, "r", encoding="utf-8") as f:
-                            file_content = f.read()
-                            file_size = len(file_content)
-                            print(f"DEBUG: File read successfully: {file_size} characters")
+                        file_content = await storage.read_text(actual_file_path)
+                        file_size = len(file_content)
+                        print(f"DEBUG: File read successfully: {file_size} characters")
 
                         # Add file header and content to the combined source code
                         file_extension = source_file_path.split('.')[-1] if '.' in source_file_path else 'txt'
@@ -1312,7 +1318,7 @@ async def debug_file_path(file_path: str, db: Session = Depends(get_db)) -> Any:
         return {
             "original_path": file_path,
             "resolved_path": actual_path,
-            "file_exists": file_exists,
+            "file_exists": file_exists or actual_path.startswith("http://") or actual_path.startswith("https://"),
             "can_read": os.access(actual_path, os.R_OK) if file_exists else False
         }
     except Exception as e:

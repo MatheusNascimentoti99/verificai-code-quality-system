@@ -102,7 +102,7 @@ async def startup_event():
 
     # 3. Run Self-Healing Cleanup (Remove orphan paths from Render ephemeral disk restarts)
     db = next(get_db())
-    cleanup_invalid_paths(db)
+    # cleanup_invalid_paths(db)
 
 
 @app.get("/")
