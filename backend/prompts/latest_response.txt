@@ -1,46 +1,742 @@
 ## Avaliação Geral
-O projeto apresenta uma arquitetura altamente modular e organizada, refletindo uma refatoração significativa de um antigo sistema monolítico. A separação em camadas (`controller`, `services`, `utils`, `domain`, `providers`) segue princípios de design sólidos (SOLID), facilitando a testabilidade e manutenção. O código demonstra maturidade no tratamento de exceções, uso de padrões de projeto (como Facade, Factory e Singleton) e preocupação com a segurança e eficiência de recursos. A legibilidade é excelente, com documentação clara em quase todos os módulos.
+O código apresenta uma estrutura bem organizada, dividida em domínios, gateways, infraestrutura e framework, seguindo boas práticas de arquitetura para aplicações NestJS. Há um uso extensivo de injeção de dependência do NestJS, DTOs e validação de entrada com Zod, o que contribui para a robustez e segurança. A separação de responsabilidades é geralmente bem aplicada em serviços e controllers.
 
----
+No entanto, foram identificados pontos críticos que requerem atenção. O princípio da Inversão de Dependência é violado em alguns locais chave, como no `AuthGuard` e `GovBrService`, onde o `DataSource` do TypeORM é acessado manualmente, acoplando esses componentes diretamente à implementação do banco de dados. Há também violações de camadas, com lógica de negócio (como criação/atualização de usuários e gerenciamento de sessões) presente no `GovBrService` e no `AuthGuard`, que deveriam focar apenas em autenticação.
 
-## Critério 1: Código segue boas práticas e padrões de codificação
-**Status:** Conforme
-**Confiança:** 0.95
+O manuseio de dados em larga escala pode ser uma preocupação, especialmente com o uso de `memoryStorage` para uploads de arquivos e a coleta de streams completos em buffers na memória para respostas da IA, o que pode pressionar a memória da aplicação. Condições de corrida em operações de persistência de dados são um risco presente devido ao padrão comum de "leitura-seguida-de-escrita" sem uso explícito de transações ou bloqueios.
 
-O código segue rigorosamente boas práticas de desenvolvimento Python. A estrutura de diretórios é lógica e modular. Observa-se a aplicação consistente de princípios como:
-- **SRP (Single Responsibility Principle):** Cada classe e função possui uma responsabilidade única, como visto em `PDFProcessor` vs `OCRService`.
-- **Inversão de Dependência:** O uso de classes base abstratas (`AIProvider`, `DirectoryManagerInterface`) permite a troca de implementações sem alterar o código cliente.
-- **Gerenciamento de Recursos:** O uso de `contextlib` (implícito em `with`), tratamento de encerramento de conexões HTTP (`httpx.AsyncClient`) e a implementação do padrão Singleton para o `EasyOCR Reader` (economizando ~5GB de RAM) demonstram preocupação com performance e estabilidade.
-- **Segurança:** O uso de "magic numbers" (`%PDF`) para validação de arquivos em `pdf_upload_service.py` é uma prática superior a apenas confiar no `Content-Type`.
+A validação de entradas é forte com Zod, e o acesso a recursos do sistema é sanitizado, o que é positivo para a segurança. O tratamento de erros é abrangente com interceptors e filtros globais, embora um caso específico de erro mascarado tenha sido notado. A consistência dos contratos de API é boa na maioria dos endpoints, mas um endpoint em particular (`ExtractPdfDataController`) retorna estruturas de dados inconsistentes, o que pode dificultar o consumo por clientes.
+
+No geral, a base do código é sólida, mas melhorias focadas na adesão mais estrita aos princípios SOLID, otimização de memória para dados em larga escala, mitigação de condições de corrida e refinamento de contratos de API seriam benéficas para a manutenibilidade, escalabilidade e resiliência da aplicação.
+
+## Critério 1: Princípios SOLID: Analisar a aplicação de princípios de design consolidados, como a Responsabilidade Única - SRP (evitando componentes que acumulam funções díspares) como controllers com múltiplos endpoints e a Inversão de Dependência (favorecendo o uso de mecanismos de injeção de dependência em vez da instanciação manual de componentes) como a instanciação manual de dependências em vez de usar a injeção padrão do NestJS
+**Status:** Parcialmente Conforme
+**Confiança:** 0.8%
+
+A aplicação dos princípios SOLID é razoável, mas com algumas violações notáveis, principalmente em relação à Inversão de Dependência (DIP) e, em menor grau, à Responsabilidade Única (SRP).
+
+**SRP (Single Responsibility Principle):**
+*   **Controllers:** Os controllers, em geral, seguem o SRP, delegando a lógica de negócio para os serviços. Por exemplo, `ApproveUserController` e `ChangeUserRoleController` invocam seus respectivos serviços (`ApproveUserService`, `ChangeUserRoleService`).
+    ```typescript
+    // olivia-main/api/src/gateways/http/controllers/domain/users/approve-user.controller.ts
+    @Controller('api/usuarios/:id/aprovar')
+    export class ApproveUserController {
+      constructor(private approveUserService: ApproveUserService) {}
+
+      @Post()
+      async execute(@Param(routeParamsPipe) { id }: RouteParams, @Request() req: any) {
+        const aprovadorId = req.user.id;
+        const usuario = await this.approveUserService.execute({ userId: id, aprovadorId });
+        // ... retorna dados do usuário
+      }
+    }
+    ```
+*   **Services:** A maioria dos serviços de domínio (`*.service.ts`) também adere bem ao SRP, com cada classe focada em uma única operação de negócio (ex: `ApproveUserService`, `CreateExtractJobService`, `GetLaudoHistoricoService`).
+*   **`AuthGuard` (`jwt-auth.guard.ts`):** Este guarda concentra lógica de extração e validação de token, validação de sessão e, notavelmente, lógica de criação/busca de usuário para sessões de desenvolvimento. Embora todas as responsabilidades estejam relacionadas à autenticação, a lógica de gerenciamento de usuários para o ambiente de dev pode ser considerada uma responsabilidade secundária que poderia ser mais bem encapsulada ou abstraída.
+*   **`GovBrService` (`govbr.service.ts`):** Este serviço acumula diversas responsabilidades: geração de URL de autorização, troca de código por token, validação de token (JWK, claims), obtenção de informações do usuário e, crucialmente, lógica para encontrar ou criar/atualizar o `Usuario` no banco de dados, incluindo a promoção do primeiro usuário a ADMIN. A lógica de persistência e gerenciamento de roles de usuário é uma responsabilidade de domínio que está fora do escopo ideal de um serviço de autenticação.
+
+**DIP (Dependency Inversion Principle):**
+*   O projeto faz uso extensivo e correto da injeção de dependência do NestJS para a maioria dos componentes (serviços, controllers, módulos), o que é uma excelente prática. Repositórios são injetados em serviços usando `@Inject()` com tokens de provisão.
+    ```typescript
+    // olivia-main/api/src/domains/domain/services/users/approve-user.service.ts
+    @Injectable()
+    export class ApproveUserService {
+      constructor(
+        @Inject(USUARIO_REPOSITORY)
+        private usuarioRepository: Repository<Usuario>
+      ) {}
+      // ...
+    }
+    ```
+*   **Violação de DIP:** Uma violação significativa ocorre no `AuthGuard` e no `GovBrService`, onde o `DataSource` do TypeORM é obtido através de uma função estática `getDataSource()`.
+    ```typescript
+    // olivia-main/api/src/framework/authentication/jwt-auth.guard.ts
+    import { getDataSource } from '@/infrastructure/databases/typeorm/postgres/database.providers';
+    // ...
+    const dataSource = getDataSource(); // Instanciação/recuperação manual
+    const userRepo = dataSource.getRepository(Usuario);
+    ```
+    Essa abordagem contorna o mecanismo de injeção de dependência do NestJS, acoplando diretamente esses componentes à implementação específica do `DataSource` e à sua forma de inicialização, dificultando testes e a substituição por mocks. O `AuthSessionStore` também utiliza `getDataSource()`, estendendo essa violação.
 
 **Recomendações:**
-- Centralizar ainda mais as configurações de log, utilizando o módulo `logging` do Python em vez de `print` em todo o código, para permitir níveis de severidade (DEBUG, INFO, ERROR).
-- Em `app/services/ai/utils/excel/aplicar_formulas.py`, o arquivo é excessivamente longo (80k+ caracteres). Poderia ser dividido em sub-módulos de funções de cálculo por categoria.
+- **Refatorar `GovBrService`:** Extrair a lógica de criação/atualização de `Usuario` e atribuição de `Role` para um serviço de domínio dedicado (ex: `UserService` ou `AuthIntegrationService`). O `GovBrService` deve se concentrar apenas na interação com o provedor Gov.br e na obtenção dos dados do usuário externo.
+- **Refatorar `AuthGuard`:** A lógica de criação/busca de usuário para sessões de desenvolvimento no `AuthGuard` deve ser removida e, se necessária, movida para um serviço de usuário ou um provedor de credenciais de desenvolvimento injetável.
+- **Remover `getDataSource()` estático:** O `DataSource` do TypeORM deve ser sempre injetado via DI do NestJS. Para componentes que precisam de acesso ao `DataSource` fora do escopo de um repositório injetado (ex: `AuthSessionStore`), o `DataSource` deveria ser injetado no construtor. Para `AuthSessionStore` que é uma classe utilitária estática, considere transformá-la em um serviço injetável ou passar o `DataSource` como parâmetro para seus métodos estáticos, obtendo-o por injeção no ponto de chamada.
 
 #FIM_ANALISE_CRITERIO#
 
----
-
-## Critério 2: Variáveis e funções têm nomes descritivos e significativos
+## Critério 2: Acoplamento a Frameworks: Detectar o uso de funcionalidades que acoplam o código a implementações específicas do framework (ex: uso de @Res() do Express no NestJS), o que dificulta a manutenção e a aplicação de interceptors e pipes globais.
 **Status:** Conforme
-**Confiança:** 0.98
+**Confiança:** 0.9%
 
-A nomeação no projeto é exemplar. Segue o padrão `snake_case` do PEP 8, e os nomes das funções refletem claramente suas ações (ex: `convert_pdf_to_images_and_extract_data`, `schedule_file_cleanup`, `validate_extracted_data`). Não há nomes ambíguos ou abreviações obscuras. As classes possuem nomes que descrevem seus papéis (ex: `ProcessingOrchestrator`, `BackgroundTaskManager`), o que torna a leitura do fluxo de execução quase intuitiva.
+O código demonstra um bom alinhamento com as práticas recomendadas do NestJS para evitar acoplamento excessivo a frameworks subjacentes (como Express), o que é crucial para manutenção e extensibilidade.
 
 **Evidências:**
-- Em `app/services/document/report_generation_service.py`, os métodos `generate_report`, `_get_temp_files_for_cleanup` e `validate_input_data` são autoexplicativos.
-- Em `app/services/ai/processors/ocr_service.py`, os métodos `process_single_page` e `_apply_text_corrections` comunicam precisamente o seu propósito.
-- O uso de `lpco` e `sec_data` é consistente em todo o sistema, facilitando a rastreabilidade dos dados.
+*   **Ausência de `@Res()` do Express:** Não foi detectado o uso direto do decorador `@Res()` do Express nos controllers. Isso é uma prática excelente, pois o uso de `@Res()` desabilita o comportamento padrão de resposta do NestJS, impedindo que interceptors e pipes globais atuem sobre a resposta.
+*   **Uso de `StreamableFile` para downloads:** Para operações de download de arquivos, como em `GetLaudoPdfController`, o NestJS `StreamableFile` é utilizado. Esta é a maneira idiomática e desacoplada de retornar arquivos, permitindo que o NestJS gerencie a resposta HTTP.
+    ```typescript
+    // olivia-main/api/src/gateways/http/controllers/domain/laudo/get-laudo-pdf.controller.ts
+    @Controller('api/laudo')
+    export class GetLaudoPdfController {
+      // ...
+      @Get(':filename')
+      async execute(@Param(routeParamsPipe) { filename }: RouteParams): Promise<StreamableFile> {
+        // ...
+        return new StreamableFile(fileStream, {
+          type: 'application/pdf',
+          disposition: `inline; filename="${filename}"`
+        });
+      }
+    }
+    ```
+*   **Integração de Multer com NestJS:** O `FileInterceptor` de `@nestjs/platform-express` é utilizado em `ExtractPdfDataController`. Esta é a forma padrão de integrar o Multer (biblioteca de upload de arquivos) com o NestJS, que encapsula as interações com o framework subjacente.
+*   **Extensão da interface `Request` do Express:** Em `jwt-auth.guard.ts`, a interface `Request` do Express é estendida para incluir propriedades customizadas como `payload`, `session` e `user`.
+    ```typescript
+    // olivia-main/api/src/framework/authentication/jwt-auth.guard.ts
+    declare module 'express-serve-static-core' {
+      interface Request {
+        payload?: JwtPayload;
+        session?: any;
+        user?: any;
+      }
+    }
+    ```
+    Embora esta seja uma forma de acoplamento direto aos tipos do Express, é uma prática comum e muitas vezes necessária em NestJS para enriquecer o objeto de requisição com dados de autenticação ou autorização, e é geralmente aceita como um "acoplamento controlado" que não impede o funcionamento de pipes e interceptors.
 
 **Recomendações:**
-- O código já está em um nível de legibilidade muito alto. A única sugestão seria garantir que os tipos de retorno em funções complexas (como as que retornam tuplas `Tuple[Dict, Dict]`) sejam encapsulados em `NamedTuple` ou `Dataclasses` para tornar o acesso aos dados (`data[0]`, `data[1]`) mais explícito (`result.chemical`, `result.secondary`).
+- Manter a prática atual de evitar `Res()` e usar `StreamableFile` para respostas de arquivo.
+- Continuar a utilizar os mecanismos de injeção de dependência e os recursos nativos do NestJS para HTTP, pois eles abstraem o framework subjacente de forma eficaz.
+
+#FIM_ANALISE_CRITERIO#
+
+## Critério 3: Violação de Camadas: Identificar se a lógica de negócio está incorretamente localizada em camadas de interface (como controladores de API), em vez de residir em camadas de serviço ou domínio dedicadas.
+**Status:** Parcialmente Conforme
+**Confiança:** 0.85%
+
+A arquitetura do projeto tenta seguir um padrão de camadas, com controllers na camada de interface (`gateways/http/controllers`), serviços na camada de aplicação/domínio (`domains/domain/services`) e entidades na camada de domínio (`domains/domain/model-entities`). No entanto, foram identificadas algumas violações importantes.
+
+**Evidências de Conformidade:**
+*   **Controllers como camada de interface:** A maioria dos controllers atua corretamente como pontos de entrada HTTP, realizando validação de entrada (com Zod pipes) e delegando a execução da lógica de negócio para os serviços.
+    ```typescript
+    // olivia-main/api/src/gateways/http/controllers/domain/users/approve-user.controller.ts
+    @Controller('api/usuarios/:id/aprovar')
+    export class ApproveUserController {
+      constructor(private approveUserService: ApproveUserService) {}
+      // ...
+      async execute(@Param(routeParamsPipe) { id }: RouteParams, @Request() req: any) {
+        const aprovadorId = req.user.id;
+        const usuario = await this.approveUserService.execute({ userId: id, aprovadorId });
+        // ...
+      }
+    }
+    ```
+*   **Serviços como camada de negócio:** Os serviços de domínio (`domains/domain/services`) contêm a lógica principal de negócio, orquestrando operações de persistência e interações com APIs externas (IA API, MinIO). Isso é um bom indicativo de separação de responsabilidades.
+    ```typescript
+    // olivia-main/api/src/domains/domain/services/laudo/create-extract-job.service.ts
+    @Injectable()
+    export class CreateExtractJobService {
+      // ...
+      async execute({ lpco, laudoFile, usuario, forceReprocess = false }: CreateExtractJobInput): Promise<CreateExtractJobOutput> {
+        // Lógica de negócio para verificar cache, criar ou atualizar laudo
+      }
+    }
+    ```
+
+**Evidências de Violação:**
+*   **Lógica de negócio em `GovBrService` (camada de framework/autenticação):** O `GovBrService` (`framework/authentication/govbr.service.ts`) não apenas lida com o fluxo OAuth2/OpenID Connect do Gov.br, mas também contém lógica complexa de negócio relacionada à criação, atualização e atribuição de roles para o `Usuario` no banco de dados. Isso inclui verificar se já existe um usuário, criar um novo se não houver, e até mesmo promover o primeiro usuário a `ADMIN`. Esta lógica deveria estar em um serviço de domínio de usuário.
+    ```typescript
+    // olivia-main/api/src/framework/authentication/govbr.service.ts
+    // ... dentro de exchangeCode
+    const dataSource = getDataSource(); // Violação de DIP e camada
+    const userRepo = dataSource.getRepository(Usuario);
+    const cpf = typeof user.sub === 'string' ? user.sub.replace(/\D/g, '') : '';
+    let usuario = await userRepo.findOne({ where: { nrCpf: cpf } });
+    if (!usuario) {
+      usuario = userRepo.create({ nrCpf: cpf, nmUsuario: user.name ?? '' });
+    } else {
+      usuario.nmUsuario = user.name ?? usuario.nmUsuario;
+    }
+    // Verifica se não existe nenhum admin no sistema e promove o primeiro usuário
+    const adminCount = await userRepo.count({ where: { cdRole: UsuarioRole.ADMIN } });
+    if (adminCount === 0) {
+      usuario.cdRole = UsuarioRole.ADMIN;
+      usuario.stAprovado = true;
+      usuario.dhAprovacao = new Date();
+    }
+    await userRepo.save(usuario); // Persistência de domínio em serviço de autenticação
+    ```
+*   **Lógica de negócio em `AuthGuard` (`jwt-auth.guard.ts`):** Similarmente, o `AuthGuard` contém lógica para criar e persistir usuários de desenvolvimento diretamente no banco de dados durante a validação da sessão. Esta é uma lógica de domínio que não deveria estar em um guarda de autenticação.
+    ```typescript
+    // olivia-main/api/src/framework/authentication/jwt-auth.guard.ts
+    // ... dentro de validateSession
+    const dataSource = getDataSource(); // Violação de DIP e camada
+    const userRepo = dataSource.getRepository(Usuario);
+    let usuario = await userRepo.findOne({ where: { nrCpf: payloadCpf } });
+    if (!usuario) {
+      this.logger.log('Criando usuário de desenvolvimento');
+      usuario = userRepo.create({
+        nrCpf: payloadCpf,
+        nmUsuario: 'Dev User'
+      });
+      await userRepo.save(usuario); // Persistência de domínio em guarda de autenticação
+    }
+    ```
+*   **Lógica de negócio em `ExtractPdfDataController`:** Embora delegue a maior parte do trabalho, este controller ainda contém a lógica de "buscar ou criar usuário" (`usuarioRepository.findOne` e `usuarioRepository.save`). Idealmente, essa orquestração inicial de usuário deveria ser responsabilidade de um serviço de domínio.
+    ```typescript
+    // olivia-main/api/src/gateways/http/controllers/domain/laudo/extract-pdf-data.controller.ts
+    // ...
+    let usuario = await this.usuarioRepository.findOne({ where: { nrCpf: cpf } });
+    if (!usuario) {
+      usuario = this.usuarioRepository.create({
+        nrCpf: cpf,
+        nmUsuario: cpf
+      });
+      usuario = await this.usuarioRepository.save(usuario);
+    }
+    ```
+*   **`AuthSessionStore` (`utils/auth-session.store.ts`):** Esta classe utilitária interage diretamente com o repositório de `Sessao` e `Usuario` para gerenciar sessões, incluindo a persistência. Embora seja uma "store", a interação direta com repositórios de entidades de domínio (e usando `getDataSource()`) indica uma responsabilidade que poderia ser melhor encapsulada em um serviço de domínio ou infraestrutura dedicado à gestão de sessões.
+
+**Recomendações:**
+- **Centralizar Lógica de Usuário:** Criar um serviço de domínio dedicado (ex: `UsuarioService`) que seja responsável por todas as operações de criação, busca, atualização e gerenciamento de roles de `Usuario`.
+- **Delegar do `GovBrService` e `AuthGuard`:** O `GovBrService` e o `AuthGuard` devem injetar e utilizar este `UsuarioService` para todas as interações com a entidade `Usuario`, removendo a lógica de persistência e regras de negócio de usuário desses componentes.
+- **Refatorar `AuthSessionStore`:** Transformar `AuthSessionStore` em um serviço injetável (`@Injectable()`) e injetar o `DataSource` ou o `Repository<Sessao>` diretamente, eliminando o uso de `getDataSource()`. Isso permite que a gestão de sessões seja tratada como um componente de infraestrutura/domínio devidamente injetável.
+- **Refatorar `ExtractPdfDataController`:** A lógica de "buscar ou criar usuário" deve ser movida para um serviço de domínio (ex: `UserService.findOrCreateByCpf`), e o controller deve apenas chamar esse serviço.
+
+#FIM_ANALISE_CRITERIO#
+
+## Critério 4: Pressão sobre a Memória: Analisar rotinas e laços que criam um volume excessivo de objetos de curta duração, pressionando o coletor de lixo (Garbage Collector) e causando pausas desnecessárias na aplicação. Avaliar se objetos poderiam ser reutilizados para otimizar o uso da memória.
+**Status:** Parcialmente Conforme
+**Confiança:** 0.75%
+
+A aplicação apresenta alguns pontos onde pode haver pressão sobre a memória, principalmente em operações que envolvem o processamento de arquivos e streams de dados, que podem carregar grandes volumes para a memória de uma vez.
+
+**Evidências:**
+*   **Upload de Arquivos com `memoryStorage()`:** Em `ExtractPdfDataController`, o `FileInterceptor` do Multer está configurado para usar `memoryStorage()`. Isso significa que o arquivo PDF inteiro (com limite de 5MB) é carregado na memória RAM do servidor como um `Buffer` antes de qualquer processamento.
+    ```typescript
+    // olivia-main/api/src/gateways/http/controllers/domain/laudo/extract-pdf-data.controller.ts
+    @UseInterceptors(
+      FileInterceptor('laudo', {
+        storage: memoryStorage(), // Carrega o arquivo inteiro na memória
+        limits: { fileSize: 5 * 1024 * 1024 }, // Limite de 5MB
+        // ...
+      })
+    )
+    ```
+    Para múltiplas requisições concorrentes com arquivos grandes, isso pode levar a um consumo significativo de memória e pressionar o Garbage Collector.
+*   **Coleta de Streams em `Buffer` para respostas da IA:** No `DataProcessingService`, a resposta da API de IA é obtida como um stream (`responseType: 'stream'`). No entanto, o código então concatena todos os chunks do stream em um único `Buffer` na memória antes de salvá-lo no MinIO.
+    ```typescript
+    // olivia-main/api/src/domains/domain/services/laudo/data-processing.service.ts
+    const fileBuffer = await new Promise<Buffer>((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      apiResponse.data.on('data', (chunk: Buffer) => chunks.push(chunk));
+      apiResponse.data.on('end', () => resolve(Buffer.concat(chunks))); // Coleta o stream inteiro em memória
+      apiResponse.data.on('error', reject);
+    });
+    await minioClient.putObject(MINIO_BUCKET, aiFileName, fileBuffer, fileBuffer.length, { /* ... */ });
+    ```
+    Se a resposta da IA for muito grande, essa operação pode causar alta pressão de memória.
+*   **Carregamento de resultado da IA em memória:** No `ExtractPdfDataService`, a resposta da API da IA (`apiResponse.data`) é diretamente atribuída a `laudo.jsDadoBruto` e salva. Se `apiResponse.data` for um JSON grande, ele também será mantido em memória.
+    ```typescript
+    // olivia-main/api/src/domains/domain/services/laudo/extract-pdf-data.service.ts
+    // ...
+    laudo.jsDadoBruto = apiResponse.data; // Carrega o JSON inteiro em memória
+    // ...
+    ```
+*   **Carregamento de listas completas do banco de dados:** Serviços como `ListAllUsersService` e `GetLaudoHistoricoService` retornam todos os registros de suas respectivas entidades (`find()`). Para um número muito grande de usuários ou laudos, isso pode carregar uma quantidade excessiva de objetos para a memória.
+    ```typescript
+    // olivia-main/api/src/domains/domain/services/users/list-all-users.service.ts
+    async execute(): Promise<Usuario[]> {
+      return this.usuarioRepository.find({ /* ... */ }); // Retorna todos os usuários
+    }
+    ```
+*   **Frontend `arquivos.jsx` (`saveToBase64`):** No lado do cliente, a função `saveToBase64` lê o arquivo inteiro para uma string Base64 na memória do navegador. Isso é uma preocupação de memória no cliente, especialmente para arquivos grandes.
+
+**Recomendações:**
+-   **Para uploads de arquivos:**
+    -   Para arquivos maiores que o limite atual ou em cenários de alta concorrência, considere mudar o `FileInterceptor` para usar `diskStorage` para salvar os arquivos temporariamente em disco. Após o processamento, o arquivo pode ser removido. Isso evita o consumo de memória RAM para cada upload.
+    -   Se o processamento do arquivo puder ser feito em chunks, utilize streams diretamente para o MinIO, sem carregar o arquivo inteiro na memória.
+-   **Para respostas da IA:**
+    -   Se a API da IA puder retornar respostas muito grandes via stream, avalie a possibilidade de fazer o streaming diretamente para o MinIO (se o MinIO Client suportar streaming de `Readable` diretamente) ou processar o stream em chunks, em vez de concatenar tudo em um único `Buffer`.
+    -   Se `jsDadoBruto` puder ser muito grande, considere alternativas como armazenar a referência ao arquivo no MinIO em vez do JSON completo no banco de dados, ou otimizar a estrutura de dados para reduzir o tamanho.
+-   **Para listagem de dados em larga escala:**
+    -   Implementar paginação (com limites e offsets) para `ListAllUsersService`, `ListPendingUsersService` e `GetLaudoHistoricoService`. Isso garante que apenas um subconjunto dos dados seja carregado em memória por vez.
+    -   No frontend (`historico.jsx`), a paginação já está implementada na UI, mas a query do backend ainda busca tudo. A paginação deve ser aplicada na camada de serviço/repositório.
+-   **No Frontend (`arquivos.jsx`):** Para arquivos grandes, evite carregar o arquivo inteiro em Base64 na memória. Se o backend suportar, envie o `File` diretamente via `FormData` sem conversão Base64 no cliente. O código já faz isso para o envio principal, mas a linha `const base64 = await saveToBase64(laudo);` dentro do `mutationFn` ainda o faz. Remova essa conversão desnecessária se o `formData.append('laudo', laudo)` já estiver enviando o arquivo corretamente.
+
+#FIM_ANALISE_CRITERIO#
+
+## Critério 5: Ciclo de Vida de Recursos Externos: Verificar se recursos externos, como arquivos temporários ou conexões de rede, são liberados de forma determinística em todos os fluxos de execução (sucesso, erro e finalização), evitando vazamentos de recursos.
+**Status:** Conforme
+**Confiança:** 0.8%
+
+O código demonstra um bom gerenciamento do ciclo de vida da maioria dos recursos externos, com atenção à liberação e prevenção de vazamentos.
+
+**Evidências:**
+*   **Conexões de Banco de Dados (TypeORM `DataSource`):** O `DataSource` do TypeORM é inicializado uma vez em `database.providers.ts` e reutilizado globalmente. A gestão do ciclo de vida de pools de conexão é intrínseca ao TypeORM e ao NestJS, que gerencia a injeção e a finalização de módulos. O uso de `getDataSource()` em alguns locais, embora seja uma violação de DIP (Critério 1), não leva a vazamentos de conexão, pois se refere à mesma instância global.
+*   **Clientes de APIs Externas (Axios `iaApi`, `apiClient`):** As instâncias do Axios são criadas globalmente e reutilizadas. O Axios gerencia suas próprias conexões HTTP. A configuração de `timeout` (5 minutos para `iaApi`) ajuda a garantir que as requisições não fiquem penduradas indefinidamente, liberando recursos de rede.
+*   **Armazenamento de Objetos (MinIO Client):** O `minioClient` é instanciado uma vez em `minio.client.ts` e reutilizado. Clientes de SDK de armazenamento de objetos geralmente gerenciam seus próprios pools de conexão e não exigem liberação explícita por operação.
+*   **Sessões de Autenticação (`AuthSessionStore`):** As sessões são armazenadas no banco de dados via `AuthSessionStore`. O método `delete(sessionId)` é chamado explicitamente em `GovBrService.logout` e em `AuthGuard.validateSession` (quando uma sessão expira), garantindo que os registros de sessão sejam removidos do banco de dados quando não são mais válidos.
+    ```typescript
+    // olivia-main/api/src/framework/authentication/govbr.service.ts
+    async logout(sessionId: string): Promise<void> {
+      if (!sessionId) return;
+      await AuthSessionStore.delete(sessionId);
+    }
+
+    // olivia-main/api/src/framework/authentication/jwt-auth.guard.ts
+    // ... dentro de validateSession
+    if (sessionExpiration && Date.now() >= sessionExpiration) {
+      this.logger.error('Sessão expirada:', sessionId);
+      await AuthSessionStore.delete(sessionId); // Libera sessão expirada
+      throw new UnauthorizedException('Sessão expirada');
+    }
+    ```
+*   **Arquivos Temporários (Multer `memoryStorage`):** Para uploads de arquivos, `memoryStorage()` é utilizado. Isso significa que os arquivos são mantidos em memória como `Buffer`s. Uma vez que o `Buffer` não é mais referenciado (e o escopo da requisição HTTP termina), o coletor de lixo do JavaScript eventualmente liberará essa memória. Não há arquivos no sistema de arquivos local para serem explicitamente removidos. Se `diskStorage` fosse usado, a função `removeFile` em `utils.ts` seria relevante para garantir a limpeza.
+    ```typescript
+    // olivia-main/api/src/domains/domain/services/laudo/utils.ts
+    export async function removeFile(filePath?: string): Promise<void> {
+      if (!filePath) return;
+      try {
+        await fs.promises.unlink(filePath);
+      } catch (error: any) {
+        if (error.code !== 'ENOENT') { // Ignora erro se arquivo já não existe
+          logger.error(`Erro ao remover o arquivo ${filePath}:`, error);
+          return;
+        }
+      }
+      // ...
+    }
+    ```
+    Atualmente, `removeFile` não é chamado no fluxo principal de upload, pois não há arquivos temporários em disco.
+
+**Recomendações:**
+-   Continuar a monitorar a utilização de memória, especialmente se o volume de arquivos ou o tamanho das respostas da IA aumentar, para garantir que o `memoryStorage` e a coleta de streams na memória continuem sendo adequados. Se houver mudanças, considerar a implementação de `diskStorage` e a chamada de `removeFile` em blocos `finally` ou em um serviço de cleanup.
+-   Revisar a lógica do `removeFile` em `utils.ts` para garantir que ele seja robusto para todos os cenários, caso venha a ser usado. Atualmente, ele tenta verificar o arquivo novamente após o `unlink`, o que pode ser redundante ou até mesmo problemático se houver latência no sistema de arquivos.
+
+#FIM_ANALISE_CRITERIO#
+
+## Critério 6: Operações de I/O Bloqueantes ou Inseguras: Inspecionar chamadas de rede e outras operações de entrada/saída para garantir a configuração de tempos limite (timeouts) e limites de tamanho de payload, prevenindo que a aplicação fique bloqueada ou vulnerável a sobrecargas.
+**Status:** Conforme
+**Confiança:** 0.9%
+
+O código demonstra boas práticas na configuração de tempos limite (timeouts) e limites de tamanho de payload para operações de I/O, o que é fundamental para a resiliência e segurança da aplicação.
+
+**Evidências:**
+*   **Timeouts para Requisições HTTP da IA:** O cliente Axios para a API de IA (`iaApi`) é configurado com um timeout de 5 minutos (300000 ms). Este timeout é explicitamente definido na inicialização do Axios e também é aplicado em chamadas específicas que podem ser demoradas, como no `ExtractPdfDataService`.
+    ```typescript
+    // olivia-main/api/src/shared/http/axios.ts
+    const TIMEOUT = 300000; // 5 minutos
+    export const iaApi = axios.create({
+      baseURL: process.env.IA_API_URL,
+      timeout: TIMEOUT
+    });
+
+    // olivia-main/api/src/domains/domain/services/laudo/extract-pdf-data.service.ts
+    const apiResponse = await iaApi.post('/extract-pdf-data', formData, {
+      // ...
+      timeout: 300000, // 5 minutos
+      // ...
+    });
+    ```
+    Isso previne que a aplicação fique bloqueada indefinidamente aguardando uma resposta da IA que pode estar lenta ou inoperante. O tratamento de erro para timeout (`ECONNABORTED`) em `ExtractPdfDataService` também é um bom ponto.
+*   **Limites de Tamanho de Payload para Uploads:** O `FileInterceptor` em `ExtractPdfDataController` especifica um limite de tamanho de arquivo de 5MB (`fileSize: 5 * 1024 * 1024`). Isso mitiga ataques de negação de serviço (DoS) por uploads de arquivos excessivamente grandes e controla o consumo de memória (já que `memoryStorage` é usado).
+    ```typescript
+    // olivia-main/api/src/gateways/http/controllers/domain/laudo/extract-pdf-data.controller.ts
+    @UseInterceptors(
+      FileInterceptor('laudo', {
+        storage: memoryStorage(),
+        limits: { fileSize: 5 * 1024 * 1024 }, // Limite de 5MB
+        // ...
+      })
+    )
+    ```
+*   **Limites de Tamanho de Body para JSON/URL-encoded:** No `main.ts`, o `body-parser` é configurado para limitar o tamanho do corpo da requisição a 10MB (`limit: '10mb'`). Isso é uma medida de segurança geral para todos os endpoints que recebem JSON ou dados URL-encoded.
+    ```typescript
+    // olivia-main/api/src/main.ts
+    // ...
+    const bodyParser = require('body-parser');
+    expressApp.use(bodyParser.json({ limit: '10mb' }));
+    expressApp.use(bodyParser.urlencoded({ limit: '10mb', extended: true }));
+    // ...
+    ```
+*   **Operações Assíncronas:** Todas as operações de I/O de rede e banco de dados são assíncronas (`async/await`), o que evita o bloqueio do event loop principal do Node.js, garantindo que a aplicação permaneça responsiva.
+*   **Fire-and-forget para processamento pesado:** Em `ExtractPdfDataController`, o `processExtractAsyncService.dispararExtracao` é invocado usando `setImmediate`. Esta é uma ótima estratégia para tarefas de longa duração, permitindo que a requisição HTTP original retorne rapidamente (202 Accepted) sem bloquear o cliente, enquanto o processamento pesado ocorre em segundo plano.
+    ```typescript
+    // olivia-main/api/src/gateways/http/controllers/domain/laudo/extract-pdf-data.controller.ts
+    setImmediate(async () => {
+      // ...
+      this.processExtractAsyncService.dispararExtracao(laudo, laudoFile.buffer, fileName)
+        .catch(err => { /* ... log error ... */ });
+    });
+    ```
+*   **Sanitização de Caminhos:** Em `GetLaudoPdfService`, `path.basename(filename)` é usado para sanitizar o nome do arquivo antes de ser usado para buscar no MinIO. Isso previne ataques de Path Traversal, garantindo que usuários maliciosos não possam acessar arquivos fora do diretório pretendido.
+
+**Recomendações:**
+-   Revisar o uso de `maxBodyLength: Infinity` e `maxContentLength: Infinity` em requisições Axios (ex: `DataProcessingService`, `ProcessExtractAsyncService`). Embora seja para comunicação interna com a IA, se a IA puder retornar respostas de tamanho ilimitado, isso pode anular os limites de memória da aplicação. Considerar a definição de um limite superior para essas respostas, se aplicável.
+
+#FIM_ANALISE_CRITERIO#
+
+## Critério 7: Manuseio de Dados em Larga Escala: Detectar o carregamento de grandes volumes de dados (como arquivos ou resultados de consultas) diretamente para a memória. Recomendar a utilização de padrões como streaming para processamento de dados em partes (chunks).
+**Status:** Parcialmente Conforme
+**Confiança:** 0.7%
+
+O manuseio de dados em larga escala apresenta desafios e oportunidades de otimização, especialmente em relação ao carregamento de arquivos e resultados de consultas para a memória.
+
+**Evidências:**
+*   **Carregamento de Arquivos Completos para Memória:**
+    *   **Uploads:** Como mencionado no Critério 4, o `FileInterceptor` em `ExtractPdfDataController` usa `memoryStorage()`, carregando o PDF completo (até 5MB) na memória. Embora 5MB possa ser um limite razoável para um único arquivo, múltiplos uploads simultâneos podem rapidamente esgotar a memória disponível.
+    *   **Frontend:** No `arquivos.jsx`, a função `saveToBase64` lê o arquivo inteiro para uma string Base64 na memória do cliente. Isso pode ter impacto na performance e consumo de memória do navegador para arquivos maiores.
+*   **Coleta de Streams Completos em Memória:**
+    *   Em `DataProcessingService`, uma requisição para a API de IA é feita com `responseType: 'stream'`. Contudo, o código então concatena todos os chunks do stream em um único `Buffer` antes de salvar no MinIO. Se a resposta da IA (o PDF processado ou dados brutos) for muito grande, isso resultará no carregamento de todo o conteúdo na memória.
+    ```typescript
+    // olivia-main/api/src/domains/domain/services/laudo/data-processing.service.ts
+    const fileBuffer = await new Promise<Buffer>((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      apiResponse.data.on('data', (chunk: Buffer) => chunks.push(chunk));
+      apiResponse.data.on('end', () => resolve(Buffer.concat(chunks))); // Carrega tudo para a memória
+      apiResponse.data.on('error', reject);
+    });
+    ```
+    *   De forma semelhante, em `ExtractPdfDataService`, `apiResponse.data` (que seria o JSON de dados brutos) é diretamente atribuído a `laudo.jsDadoBruto`. Se este JSON for muito extenso, ele será carregado e mantido na memória da aplicação.
+*   **Consultas de Listagem Sem Paginação:**
+    *   Serviços como `ListAllUsersService`, `ListPendingUsersService` e `GetLaudoHistoricoService` utilizam `this.repository.find()` sem qualquer tipo de paginação ou limitação. Isso significa que, se houver milhares ou milhões de registros, todos eles serão carregados na memória do servidor, o que é insustentável para grandes volumes de dados.
+    ```typescript
+    // olivia-main/api/src/domains/domain/services/users/list-all-users.service.ts
+    async execute(): Promise<Usuario[]> {
+      return this.usuarioRepository.find({ /* ... */ }); // Carrega todos os usuários
+    }
+    ```
+*   **Uso Correto de Streaming:**
+    *   Em `GetLaudoPdfController`, o serviço `GetLaudoPdfService` retorna um stream do MinIO, que é então encapsulado em um `StreamableFile` do NestJS. Esta é uma implementação correta de streaming, onde o arquivo é lido e enviado em partes para o cliente, sem carregar o arquivo inteiro na memória do servidor.
+    ```typescript
+    // olivia-main/api/src/gateways/http/controllers/domain/laudo/get-laudo-pdf.controller.ts
+    return new StreamableFile(fileStream, { /* ... */ }); // StreamableFile para streaming eficiente
+    ```
+
+**Recomendações:**
+-   **Para Uploads:** Para arquivos que excedam um certo limite ou em ambientes de alta concorrência, migrar de `memoryStorage()` para `diskStorage()` no `FileInterceptor`. Após salvar em disco, o arquivo pode ser transmitido para o MinIO (se o MinIO Client suportar streams de leitura de arquivos) e depois removido do disco.
+-   **Para Respostas da IA (stream):** Onde a resposta da IA é um stream (como um PDF processado), evite coletar o stream inteiro em um `Buffer`. Em vez disso, transmita-o diretamente para o MinIO se o `minioClient.putObject` puder aceitar um `ReadableStream` como entrada (que geralmente pode).
+-   **Para `jsDadoBruto`:** Se os dados brutos da IA (`jsDadoBruto`) puderem ser muito grandes, considere armazenar apenas uma referência (ex: um URL ou ID de objeto no MinIO) em vez do JSON completo no banco de dados. O JSON poderia ser recuperado sob demanda do MinIO.
+-   **Para Listagens de Dados:** Implementar paginação (`skip`, `take` no TypeORM) em todos os serviços de listagem (`ListAllUsersService`, `ListPendingUsersService`, `GetLaudoHistoricoService`). A camada de serviço deve receber parâmetros de paginação (ex: `page`, `pageSize`) e passá-los para o repositório. O frontend (`historico.jsx`) já tem componentes de paginação, mas a lógica do backend precisa ser adaptada.
+
+#FIM_ANALISE_CRITERIO#
+
+## Critério 8: Condições de Corrida em Persistência: Identificar padrões de "leitura-seguida-de-escrita" em operações de banco de dados que podem introduzir inconsistências de dados devido à concorrência, sugerindo o uso de transações ou operações atômicas.
+**Status:** Parcialmente Conforme
+**Confiança:** 0.8%
+
+O código apresenta vários padrões de "leitura-seguida-de-escrita", que são suscetíveis a condições de corrida em ambientes de alta concorrência se não forem protegidos adequadamente. Embora algumas mitigações estejam presentes, o uso explícito de transações para garantir atomicidade é limitado.
+
+**Evidências de Padrões de "Leitura-seguida-de-escrita":**
+*   **`CreateExtractJobService` (LPCO e Usuário):** Este serviço primeiro busca um laudo existente (`this.laudoRepository.findOne()`) e, dependendo do resultado, ou atualiza o status de um laudo existente, ou cria um novo.
+    ```typescript
+    // olivia-main/api/src/domains/domain/services/laudo/create-extract-job.service.ts
+    let laudoExistente = await this.laudoRepository.findOne({ /* ... */ });
+    if (!forceReprocess && laudoExistente?.jsDadoBruto && laudoExistente.status === LaudoStatus.CONCLUIDO) {
+      // Retorna do cache
+    } else if (laudoExistente) {
+      laudoExistente.status = LaudoStatus.PENDENTE;
+      // ...
+      laudoSalvo = await this.laudoRepository.save(laudoExistente);
+    } else {
+      const novoLaudo = this.laudoRepository.create({ /* ... */ });
+      laudoSalvo = await this.laudoRepository.save(novoLaudo);
+    }
+    ```
+    Em um cenário de alta concorrência, duas requisições para o *mesmo LPCO e usuário* poderiam ler o estado "não existente" ou "cache expirado" simultaneamente e tentar criar ou atualizar o mesmo registro, levando a uma corrida.
+*   **`GovBrService` (Criação/Atualização de Usuário):** Durante o processo de callback do Gov.br, o serviço verifica se um `Usuario` existe pelo CPF e, se não, o cria; caso contrário, atualiza seu nome. Também contém lógica para promover o primeiro usuário a `ADMIN`.
+    ```typescript
+    // olivia-main/api/src/framework/authentication/govbr.service.ts
+    let usuario = await userRepo.findOne({ where: { nrCpf: cpf } });
+    if (!usuario) {
+      usuario = userRepo.create({ nrCpf: cpf, nmUsuario: user.name ?? '' });
+    } else {
+      usuario.nmUsuario = user.name ?? usuario.nmUsuario;
+    }
+    // ... lógica para adminCount ...
+    await userRepo.save(usuario);
+    ```
+    Várias tentativas de login simultâneas para um novo CPF podem resultar em corridas para criar o mesmo usuário.
+*   **`ExtractCallbackService` e `LaudoCallbackService` (Atualização de Status):** Ambos os serviços buscam um laudo pelo ID e depois atualizam seu status e outros campos.
+    ```typescript
+    // olivia-main/api/src/domains/domain/services/laudo/extract-callback.service.ts
+    const laudo = await this.laudoRepository.findOne({ where: { id: input.laudoId } });
+    // ...
+    laudo.status = LaudoStatus.CONCLUIDO; // ou ERRO
+    await this.laudoRepository.save(laudo);
+    ```
+    Se múltiplos callbacks para o *mesmo laudo* chegarem quase simultaneamente, eles podem sobrescrever as atualizações uns dos outros, potencialmente perdendo o estado intermediário ou a mensagem de erro mais recente.
+*   **`ApproveUserService` e `ChangeUserRoleService`:** Estes serviços também seguem o padrão de buscar um usuário e depois salvá-lo com alterações.
+    ```typescript
+    // olivia-main/api/src/domains/domain/services/users/approve-user.service.ts
+    const usuario = await this.usuarioRepository.findOne({ where: { id: userId } });
+    // ...
+    usuario.stAprovado = true;
+    await this.usuarioRepository.save(usuario);
+    ```
+
+**Mitigações Existentes:**
+*   **Unique Constraint:** A entidade `LaudoOlivia` possui uma constraint `@Unique(['nrLpco', 'usuario'])`. Isso é crucial para evitar a criação de múltiplos registros de laudo para o mesmo LPCO por um mesmo usuário, prevenindo duplicação de dados, mas não resolve completamente a corrida na lógica de "leitura-e-atualização".
+    ```typescript
+    // olivia-main/api/src/domains/domain/model-entities/laudo-olivia.entity.ts
+    @Unique(['nrLpco', 'usuario'])
+    export class LaudoOlivia { /* ... */ }
+    ```
+    Similarmente, `Usuario.nrCpf` é `unique`.
+
+**Recomendações:**
+-   **Uso de Transações:** Para operações críticas de "leitura-seguida-de-escrita", especialmente aquelas que alteram estados importantes ou envolvem múltiplas entidades, envolver a lógica em uma transação de banco de dados. Isso garante atomicidade, onde todas as operações dentro da transação são bem-sucedidas ou nenhuma delas é. TypeORM suporta transações via `queryRunner.manager.transaction`.
+    ```typescript
+    // Exemplo de transação no TypeORM
+    await this.dataSource.transaction(async (manager) => {
+      const laudoRepo = manager.getRepository(LaudoOlivia);
+      // ... lógica de find, create, update usando laudoRepo ...
+      await laudoRepo.save(laudo);
+    });
+    ```
+-   **Pessimistic Locking:** Para cenários onde a concorrência é esperada e a integridade de dados é primordial (ex: atualização de status do laudo), considere usar bloqueio pessimista (ex: `repository.findOne({ where: { id }, lock: { mode: 'for update' } })`) para garantir que apenas uma transação possa modificar o registro lido até que a transação seja concluída.
+-   **Optimistic Locking:** Para cenários onde conflitos são menos frequentes e a aplicação pode lidar com retentativas, adicione uma coluna de versão (ex: `@VersionColumn()` no TypeORM) às entidades. Isso fará com que o `save` falhe se o registro tiver sido modificado por outra transação, permitindo que a aplicação trate o conflito.
+-   **Operações Atômicas (se disponíveis):** Se o banco de dados suportar operações atômicas para as atualizações específicas (ex: incrementos), priorize-as em vez de "leitura-seguida-de-escrita" manual.
+
+#FIM_ANALISE_CRITERIO#
+
+## Critério 9: Validação de Entradas: Verificar se os pontos de entrada da aplicação que recebem dados, especialmente arquivos, possuem validações, filtros de tipo e limites de tamanho para mitigar riscos de segurança. Analisar se objetos de transferência de dados (DTOs) são utilizados com bibliotecas de validação para garantir a integridade e o formato dos dados.
+**Status:** Conforme
+**Confiança:** 0.95%
+
+O código apresenta uma abordagem robusta e consistente para a validação de entradas, utilizando Zod e `FileInterceptor` para garantir a integridade e segurança dos dados recebidos.
+
+**Evidências:**
+*   **Validação de DTOs com Zod e Pipes:** O projeto utiliza o Zod para definir schemas de validação e o `ZodValidationPipe` customizado do NestJS para aplicar essas validações nos controllers. Isso garante que os dados de entrada (parâmetros de rota, corpo da requisição, query params) estejam em conformidade com o formato esperado antes de serem processados pela lógica de negócio.
+    ```typescript
+    // olivia-main/api/src/gateways/http/controllers/domain/users/approve-user.controller.ts
+    const routeParamsSchema = z.object({
+      id: z.string().regex(regexValidationId, {
+        message: 'O id deve seguir o formato esperado'
+      })
+    });
+    const routeParamsPipe = new ZodValidationPipe(routeParamsSchema);
+    // ...
+    async execute(@Param(routeParamsPipe) { id }: RouteParams, @Request() req: any) { /* ... */ }
+    ```
+    Este padrão é consistentemente aplicado em diversos controllers, como `ApproveUserController`, `ChangeUserRoleController`, `DataProcessingController`, `GovBrAuthController`.
+*   **Validação de Arquivos (Tipo e Tamanho):** O `FileInterceptor` do `@nestjs/platform-express` é configurado para validar uploads de arquivos, incluindo:
+    *   **Filtro de Tipo:** `fileFilter` é usado para aceitar apenas arquivos PDF (`application/pdf`).
+    *   **Limite de Tamanho:** `limits: { fileSize: 5 * 1024 * 1024 }` impõe um limite de 5MB para o tamanho do arquivo.
+    ```typescript
+    // olivia-main/api/src/gateways/http/controllers/domain/laudo/extract-pdf-data.controller.ts
+    @UseInterceptors(
+      FileInterceptor('laudo', {
+        storage: memoryStorage(),
+        limits: { fileSize: 5 * 1024 * 1024 }, // Limite de 5MB
+        fileFilter: (_, file, cb) => { // Filtro de tipo
+          if (file.mimetype === 'application/pdf') {
+            cb(null, true);
+          } else {
+            cb(new BadRequestException('Somente PDF'), false);
+          }
+        }
+      })
+    )
+    ```
+*   **Validação de Conteúdo de Arquivo no Serviço:** O `CreateExtractJobService` realiza uma verificação adicional para garantir que o arquivo PDF recebido não seja nulo ou vazio.
+    ```typescript
+    // olivia-main/api/src/domains/domain/services/laudo/create-extract-job.service.ts
+    if (!laudoFile || !laudoFile.buffer) {
+      throw new BadRequestException('Arquivo PDF inválido');
+    }
+    ```
+*   **Sanitização de IDs:** O `regexValidationId` (`utils/regex-validation-id.ts`) é usado em schemas Zod para garantir que IDs em parâmetros de rota contenham apenas caracteres alfanuméricos e hífens, prevenindo injeções e ataques de Path Traversal.
+*   **Validação de CPF/SUB:** A função `extractCpf` em `utils.ts` valida a presença e o formato numérico do CPF extraído do campo `sub`, lançando `BadRequestException` se inválido.
+    ```typescript
+    // olivia-main/api/src/domains/domain/services/laudo/utils.ts
+    export function extractCpf(sub?: string): string {
+      if (!sub || typeof sub !== 'string') {
+        throw new BadRequestException("O campo 'sub' (CPF) é obrigatório.");
+      }
+      const cpf = sub.replace(/\D/g, '');
+      if (!cpf) {
+        throw new BadRequestException("O campo 'sub' deve conter um CPF válido.");
+      }
+      return cpf;
+    }
+    ```
+*   **Validação Frontend:** O frontend (`arquivos.jsx`, `processamento.jsx`) também implementa validações básicas (presença de campos, formato de LPCO), fornecendo feedback imediato ao usuário antes mesmo de enviar a requisição ao backend. Isso melhora a experiência do usuário e reduz a carga de requisições inválidas no servidor.
+
+**Recomendações:**
+-   Manter a consistência no uso de Zod para validação. Se houver DTOs definidos com `class-validator` (como `ExtractPdfDataDto`, `DataProcessingDto`), decidir se será usado Zod ou `class-validator` de forma exclusiva para evitar redundância e manter um padrão único de validação. Atualmente, os DTOs com `class-validator` não estão sendo usados com pipes de `class-validator`, mas sim Zod schemas definidos nos controllers. Isso é aceitável, mas pode ser mais claro ter um único sistema de validação.
+-   Considerar adicionar validações mais granulares para os dados JSON extraídos pela IA (`jsDadoBruto`) e os dados de usuário (`jsDadoUsuario`) antes de persistir, especialmente se a estrutura puder variar e impactar a lógica de negócio downstream.
+
+#FIM_ANALISE_CRITERIO#
+
+## Critério 10: Acesso a Recursos do Sistema: Inspecionar o código que interage com o sistema de arquivos para identificar o uso de entradas do usuário na construção de caminhos, o que pode levar a vulnerabilidades de acesso indevido a arquivos (Path Traversal).
+**Status:** Conforme
+**Confiança:** 0.95%
+
+O código demonstra uma atenção adequada à segurança ao interagir com recursos do sistema de arquivos (neste caso, MinIO, que é um armazenamento de objetos, mas a preocupação com caminhos relativos ainda se aplica), especialmente quando a entrada do usuário está envolvida.
+
+**Evidências:**
+*   **Sanitização de Nomes de Arquivo para Download:** Em `GetLaudoPdfService`, o nome do arquivo (`filename`) recebido como parâmetro da rota (`@Param('filename')`) é sanitizado usando `path.basename()` antes de ser usado para buscar o objeto no MinIO.
+    ```typescript
+    // olivia-main/api/src/domains/domain/services/laudo/get-laudo-pdf.service.ts
+    import path from 'path';
+    // ...
+    async execute(filename: string) {
+      const sanitizedFilename = path.basename(filename); // Sanitização crucial
+      return await minioClient.getObject(MINIO_BUCKET, sanitizedFilename);
+    }
+    ```
+    `path.basename()` remove qualquer informação de diretório do caminho, garantindo que mesmo que um usuário mal-intencionado tente fornecer um caminho como `../../../../etc/passwd` ou `subdir/malicious.pdf`, apenas o nome base `passwd` ou `malicious.pdf` será usado. Isso previne eficazmente ataques de Path Traversal.
+*   **Geração de Nomes de Arquivo Únicos e Controlados:** A função `generateFileName` em `utils.ts` cria nomes de arquivo combinando o LPCO (sanitizado), um tipo (`usuario` ou `ia`) e um hash aleatório. Isso garante que os nomes de arquivo sejam únicos, não sejam facilmente adivinháveis e não contenham caracteres especiais que possam ser explorados.
+    ```typescript
+    // olivia-main/api/src/domains/domain/services/laudo/utils.ts
+    export function generateFileName(lpco: string, type: 'usuario' | 'ia'): string {
+      const safeLpco = lpco.replace(/[^A-Za-z0-9_-]/g, ''); // Sanitiza LPCO
+      const hash = randomBytes(6).toString('hex');
+      return `${safeLpco}_${type}_${hash}.pdf`; // Nome de arquivo controlado
+    }
+    ```
+*   **Uso de Armazenamento de Objetos (MinIO):** A utilização do MinIO como armazenamento de objetos, em vez do sistema de arquivos local do servidor, adiciona uma camada de segurança inerente. O acesso é feito através de uma API controlada (o SDK do MinIO), que geralmente não permite a manipulação arbitrária de caminhos como um sistema de arquivos tradicional.
+*   **Credenciais de Acesso a Recursos:** As credenciais para MinIO (access key, secret key) são carregadas de variáveis de ambiente (`process.env.MINIO_ACCESS_KEY`, etc.) e não são hardcoded no código, o que é uma boa prática de segurança.
+
+**Recomendações:**
+-   Continuar a aplicar `path.basename()` para qualquer entrada de usuário que possa ser interpretada como um caminho de arquivo, mesmo em contextos de armazenamento de objetos.
+-   Garantir que todas as interações com o MinIO ou qualquer outro sistema de armazenamento externo utilizem as APIs e SDKs de forma segura, evitando a concatenação direta de strings de entrada do usuário para formar caminhos ou chaves de objeto.
+
+#FIM_ANALISE_CRITERIO#
+
+## Critério 11: Tratamento de Erros: Sinalizar blocos de captura de exceção vazios ou que apenas registram o erro sem um tratamento adequado, pois eles podem ocultar falhas críticas de segurança ou de lógica de negócio.
+**Status:** Parcialmente Conforme
+**Confiança:** 0.85%
+
+O tratamento de erros no projeto é geralmente abrangente, com filtros e interceptors globais que garantem uma resposta consistente e o registro de erros. No entanto, algumas situações merecem atenção para evitar o mascaramento de falhas.
+
+**Evidências de Bom Tratamento de Erros:**
+*   **Filtro de Exceções Global (`AllExceptionsFilter`):** O `AllExceptionsFilter` (`framework/filters/errors/exception-filter.ts`) é registrado globalmente e captura todas as exceções, formatando uma resposta HTTP padronizada (`statusCode`, `timestamp`, `path`, `message`). Isso evita que erros não tratados vazem detalhes internos e garante uma experiência consistente para o cliente da API.
+*   **Interceptor de Erros Global (`ErrorsInterceptor`):** O `ErrorsInterceptor` (`framework/interceptors/errors/error-interceptor.ts`) também é global. Ele é responsável por:
+    *   Registrar detalhes do erro (mensagem, stack trace) usando `AppLogger`.
+    *   Transformar `ZodError` (erros de validação) em `InvalidFormatationException` para fornecer mensagens de erro de validação mais amigáveis e estruturadas.
+    ```typescript
+    // olivia-main/api/src/framework/interceptors/errors/error-interceptor.ts
+    catchError(error => {
+      if (error instanceof Error) {
+        this.logger.error(`Erro em ${contextRef}: ${error.name}: ${error.message}`, error.stack, 'ErrorsInterceptor');
+      } else {
+        this.logger.error('Erro desconhecido ocorrido no ErrorsInterceptor', '', 'ErrorsInterceptor');
+      }
+      if (error instanceof ZodError) {
+        // ... formata e re-lança InvalidFormatationException
+      }
+      return throwError(() => error); // Re-lança o erro para o filtro global
+    })
+    ```
+*   **Tratamento de Erros em Serviços Assíncronos (`ProcessExtractAsyncService`):** O `dispararExtracao` neste serviço, que é "fire-and-forget", inclui um bloco `catch` robusto. Em caso de erro, ele atualiza o status do `LaudoOlivia` para `ERRO`, registra a mensagem de erro (`erroIa`), persiste essa informação no banco de dados e loga o erro com stack trace. Isso é crucial para tarefas assíncronas, pois o erro não pode ser propagado para o cliente HTTP original.
+    ```typescript
+    // olivia-main/api/src/domains/domain/services/laudo/process-extract-async.service.ts
+    try { /* ... */ } catch (error: any) {
+      laudo.status = LaudoStatus.ERRO;
+      laudo.erroIa = error.response?.data?.detail || error.message || 'Erro ao disparar extração na IA';
+      await this.laudoRepository.save(laudo); // Persiste o estado de erro
+      this.logger.error(`Erro ao disparar extração IA para laudo ${laudo.id}:`, error?.stack || error);
+    }
+    ```
+*   **Tratamento de Erros no Frontend:** O frontend utiliza `Alert`s para exibir mensagens de erro (`errorMessage`, `toastMessage`) e redireciona para a página de login em caso de `401/403` (ex: `historico.jsx`, `AuthContext.js`), proporcionando feedback ao usuário e gerenciando o estado de autenticação.
+
+**Evidências de Tratamento Insuficiente/Mascaramento:**
+*   **`AuthGuard.validateSession` (Erro de Criação de Sessão Temporária):** Dentro do método `validateSession`, há um bloco `try...catch` que tenta criar uma sessão temporária. Se ocorrer um erro durante essa criação, o `catch` loga a mensagem (`this.logger.error('Falha ao criar sessão temporária:', ...)`), mas não re-lança o erro explicitamente. Em vez disso, a execução continua, e se a `session` ainda for nula, uma `UnauthorizedException('Sessão inválida')` genérica é lançada.
+    ```typescript
+    // olivia-main/api/src/framework/authentication/jwt-auth.guard.ts
+    // ... dentro de validateSession
+    if (payloadCpf) {
+      try {
+        // ... lógica de criação/busca de usuário e sessão ...
+      } catch (error) {
+        this.logger.error('Falha ao criar sessão temporária:', error instanceof Error ? error.message : String(error));
+        // O erro específico não é re-lançado aqui.
+      }
+    }
+    if (!session) { // Se session ainda for nula
+      throw new UnauthorizedException('Sessão inválida'); // Erro genérico
+    }
+    ```
+    Isso pode mascarar a causa raiz do problema de criação da sessão temporária, dificultando a depuração. Embora o erro seja logado, a resposta ao cliente é genérica, perdendo o contexto do problema.
+*   **`removeFile` em `utils.ts`:** Embora esta função não esteja no caminho crítico de requisições, o bloco `catch` para `fs.promises.unlink` ignora erros `ENOENT` (arquivo não encontrado). Se outros erros ocorrerem, eles são logados mas não re-lançados. Para uma função utilitária, pode ser preferível re-lançar erros não-`ENOENT` para que o chamador possa decidir como tratá-los.
+
+**Recomendações:**
+-   **Refatorar `AuthGuard.validateSession`:** Quando um erro ocorre na criação da sessão temporária, considere re-lançar uma exceção mais específica ou incluir a mensagem de erro original na `UnauthorizedException` para fornecer mais contexto ao log e, se apropriado, à resposta do cliente (embora para autenticação, um erro genérico seja muitas vezes preferível por segurança, o log interno deve ser detalhado).
+-   **Refatorar `removeFile`:** Para erros de `fs.promises.unlink` que não sejam `ENOENT`, re-lançar o erro após o log. Isso segue o princípio de "fail-fast" e permite que o chamador decida sobre a estratégia de recuperação ou propagação do erro.
+
+#FIM_ANALISE_CRITERIO#
+
+## Critério 12: Consistência de Contratos de API: Analisar as saídas da aplicação para detectar rotas que retornam tipos de dados inconsistentes dependendo do fluxo de execução, o que viola o contrato da API e pode causar falhas em sistemas clientes.
+**Status:** Parcialmente Conforme
+**Confiança:** 0.8%
+
+A aplicação faz um bom uso de TypeScript, DTOs e presenters para definir a estrutura das saídas da API, o que geralmente promove a consistência. No entanto, um endpoint foi identificado com uma inconsistência na estrutura de resposta que pode ser problemática para os clientes.
+
+**Evidências de Conformidade:**
+*   **Uso de Presenters e DTOs:** O projeto utiliza classes `Presenter` (ex: `LaudoHistoricoPresenter`, `GetUserPresenter`) para formatar as saídas dos endpoints, garantindo uma estrutura consistente.
+    ```typescript
+    // olivia-main/api/src/presentation/presenters/laudo/get-laudo-historico.presenter.ts
+    export class LaudoHistoricoPresenter {
+      // ... propriedades com @ApiProperty
+      static toSend(laudo: LaudoOlivia) {
+        return {
+          id: laudo.id,
+          lpco: laudo.nrLpco,
+          criacao: laudo.dhCriacaoRegistro,
+          // ...
+        };
+      }
+    }
+    ```
+    Isso é aplicado em controllers como `GetLaudoHistoricoController`.
+*   **Retornos Consistentes na Maioria dos Endpoints:** A maioria dos controllers retorna um objeto com uma estrutura bem definida.
+    *   `ApproveUserController`, `ChangeUserRoleController`, `ListAllUsersController`, `ListPendingUsersController` e `GetUserStatusController` retornam objetos com campos específicos e previsíveis.
+    *   `GetLaudoPdfController` retorna `StreamableFile`, que é um tipo de resposta consistente para download de arquivos.
+    *   `DataProcessingController`, `ExtractCallbackController` e `LaudoCallbackController` retornam objetos simples e consistentes (ex: `{ message, laudo_id, status }`).
+*   **Documentação OpenAPI (Swagger):** A presença de Swagger (`SwaggerModule.setup('api-docs', app, document)`) sugere que os contratos de API são documentados, o que ajuda a comunicar as estruturas esperadas aos clientes.
+
+**Evidências de Inconsistência:**
+*   **`ExtractPdfDataController.execute` (Endpoint `/api/extract-pdf-data`):** Este endpoint retorna duas estruturas de dados diferentes dependendo do fluxo de execução (se os dados foram retornados do cache ou se um novo job foi criado).
+    *   **Cenário 1: Retorno do Cache (`job.cached === true`)**
+        ```typescript
+        // olivia-main/api/src/gateways/http/controllers/domain/laudo/extract-pdf-data.controller.ts
+        return {
+          id: job.id,
+          status: job.status,
+          cached: true,
+          jsDadoBruto: job.jsDadoBruto,
+          obLaudoUsuario: job.obLaudoUsuario,
+          nrLpco: job.nrLpco
+        };
+        ```
+    *   **Cenário 2: Novo Job Criado (`job.cached === false`)**
+        ```typescript
+        // olivia-main/api/src/gateways/http/controllers/domain/laudo/extract-pdf-data.controller.ts
+        return {
+          id: job.id,
+          status: job.status
+        };
+        ```
+    Esta inconsistência força o cliente a implementar lógica condicional para verificar a presença de campos como `cached`, `jsDadoBruto`, `obLaudoUsuario` e `nrLpco`. Isso viola o princípio de um contrato de API consistente, dificultando a construção de clientes robustos e pode levar a erros inesperados se a lógica do cliente não cobrir ambos os casos.
+
+**Recomendações:**
+-   **Unificar a Resposta de `ExtractPdfDataController`:** Redefinir o contrato de API para o endpoint `/api/extract-pdf-data` para que ele sempre retorne uma estrutura de dados consistente.
+    *   Uma abordagem seria sempre retornar todos os campos possíveis, marcando aqueles que não estão disponíveis em um determinado fluxo como `null` ou `undefined`.
+    *   Alternativamente, criar um DTO de resposta que inclua um campo `type` (ex: `JobCreatedResponse` ou `CachedDataResponse`) e um campo de dados que seja um tipo union ou polimórfico, mas isso pode adicionar complexidade.
+    *   A solução mais simples e geralmente preferida é ter um DTO de resposta que contenha todos os campos que podem ser retornados, com `jsDadoBruto`, `obLaudoUsuario`, `nrLpco` sendo opcionais (`?`) se não estiverem presentes quando `cached` for `false`. O cliente ainda precisaria verificar se os campos opcionais existem, mas a estrutura geral do objeto seria a mesma.
 
 #FIM_ANALISE_CRITERIO#
 
 ## Recomendações Gerais
-1. **Padronização de Logs:** Migrar de `print()` para `logging` em todos os serviços para melhorar a observabilidade em produção.
-2. **Refatoração de Arquivos Grandes:** O arquivo `app/services/ai/utils/excel/aplicar_formulas.py` é um gargalo de manutenção. Considere separar as funções de cálculo por domínio (ex: `formulas_esterois.py`, `formulas_acidos_graxos.py`).
-3. **Tipagem:** Embora o código use tipos (Type Hints), em alguns retornos complexos a adoção de `Pydantic` models ou `dataclasses` melhoraria a segurança de tipo e a documentação automática.
-4. **Testes:** Dado o alto nível de modularidade, a equipe deve focar em ampliar a cobertura de testes unitários, especialmente para a lógica de cálculo (Excel) e os processadores de fallback.
+-   **Refatoração de Autenticação/Autorização:** Dedicar um esforço significativo para refatorar o `GovBrService` e o `AuthGuard`, movendo a lógica de negócio de gerenciamento de `Usuario` para um serviço de domínio apropriado. O acesso ao `DataSource` do TypeORM deve ser feito exclusivamente via injeção de dependência do NestJS.
+-   **Otimização de Memória:**
+    -   Implementar paginação para todas as consultas de listagem que potencialmente retornam grandes volumes de dados (ex: `ListAllUsersService`, `GetLaudoHistoricoService`).
+    -   Avaliar e otimizar o manuseio de arquivos e streams de dados para evitar carregar grandes volumes para a memória (ex: usar `diskStorage` para uploads e streaming direto para MinIO para respostas da IA).
+-   **Mitigação de Condições de Corrida:** Revisar todas as operações de "leitura-seguida-de-escrita" e implementar transações explícitas ou bloqueios (pessimista/otimista) conforme a necessidade de integridade dos dados e o nível de concorrência esperado.
+-   **Consistência de Contrato de API:** Unificar a estrutura de resposta do `ExtractPdfDataController` para garantir que o cliente sempre receba um tipo de dado consistente, independentemente do fluxo de execução.
+-   **Remoção de Código de Desenvolvimento:** A lógica de criação de usuário de desenvolvimento em `AuthGuard` deve ser removida ou isolada condicionalmente para ambientes de produção, para evitar que lógica específica de ambiente de desenvolvimento vaze para o código principal.
+-   **Validação de Dados da IA:** Embora o Zod seja usado para entrada, considere adicionar validações mais robustas para os dados `jsDadoBruto` e `jsDadoUsuario` após o processamento da IA, antes de persistir. Isso pode incluir schemas Zod para a estrutura esperada desses JSONs.
 
 #FIM#

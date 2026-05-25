@@ -2,6 +2,7 @@ import asyncio
 from app.core.database import SessionLocal
 from app.models.user import User, UserRole
 from app.core.security import get_password_hash
+from app.core.config import settings
 
 def create_admin():
     db = SessionLocal()
@@ -13,7 +14,8 @@ def create_admin():
                 username="admin",
                 email="admin@verificai.local",
                 full_name="Administrator",
-                hashed_password=get_password_hash("admin"),
+                # GET PASSWORD FROM ENV VAR
+                hashed_password=get_password_hash(settings.ADMIN_PASSWORD),
                 role=UserRole.ADMIN,
                 is_admin=True,
                 is_active=True,

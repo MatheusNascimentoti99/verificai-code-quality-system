@@ -2,6 +2,9 @@
 FastAPI application entry point for VerificAI Code Quality System - Demo Mode
 """
 
+import sys
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
@@ -16,6 +19,10 @@ from app.core.middleware import (
 )
 from app.api.v1 import auth, users, prompts, analysis, upload, file_paths, general_analysis, simple_analysis, code_entries
 import uvicorn
+
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
 
 # Initialize logging
 setup_logging()
@@ -44,6 +51,7 @@ if settings.ENVIRONMENT == "production":
     cors_origins = [
         "https://verificai-code-quality-system-front.vercel.app",
         "https://verificai.vercel.app",
+        "https://frontend-eight-psi-84.vercel.app",
     ] + settings.BACKEND_CORS_ORIGINS
 else:
     cors_origins = ["*"]
@@ -80,13 +88,21 @@ async def startup_event():
     """Application startup - create tables and cleanup orphan records"""
     from app.core.database import get_db
     from app.core.cleanup_tasks import cleanup_invalid_paths
+    from seed_criteria import seed_criteria
+    from create_admin import create_admin
+    from create_general_prompt import create_general_analysis_prompt
     
     # 1. Create tables if they don't exist
     create_tables()
     
-    # 2. Run Self-Healing Cleanup (Remove orphan paths from Render ephemeral disk restarts)
+    # 2. Seed initial data after the app is live
+    create_admin()
+    seed_criteria()
+    create_general_analysis_prompt()
+
+    # 3. Run Self-Healing Cleanup (Remove orphan paths from Render ephemeral disk restarts)
     db = next(get_db())
-    cleanup_invalid_paths(db)
+    # cleanup_invalid_paths(db)
 
 
 @app.get("/")

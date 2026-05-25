@@ -92,28 +92,28 @@ def setup_logging() -> None:
                 "formatter": "colored" if settings.LOG_FORMAT == "colored" else "standard",
                 "stream": sys.stdout
             },
-            "file": {
-                "class": "logging.handlers.RotatingFileHandler",
-                "level": settings.LOG_LEVEL,
-                "formatter": "json" if settings.LOG_FORMAT == "json" else "standard",
-                "filename": log_dir / "app.log",
-                "maxBytes": 10485760,  # 10MB
-                "backupCount": 5,
-                "encoding": "utf8"
-            },
-            "error_file": {
-                "class": "logging.handlers.RotatingFileHandler",
-                "level": "ERROR",
-                "formatter": "json" if settings.LOG_FORMAT == "json" else "standard",
-                "filename": log_dir / "error.log",
-                "maxBytes": 10485760,  # 10MB
-                "backupCount": 5,
-                "encoding": "utf8"
-            }
+            # "file": {
+            #     "class": "logging.handlers.RotatingFileHandler",
+            #     "level": settings.LOG_LEVEL,
+            #     "formatter": "json" if settings.LOG_FORMAT == "json" else "standard",
+            #     "filename": log_dir / "app.log",
+            #     "maxBytes": 10485760,  # 10MB
+            #     "backupCount": 5,
+            #     "encoding": "utf8"
+            # },
+            # "error_file": {
+            #     "class": "logging.handlers.RotatingFileHandler",
+            #     "level": "ERROR",
+            #     "formatter": "json" if settings.LOG_FORMAT == "json" else "standard",
+            #     "filename": log_dir / "error.log",
+            #     "maxBytes": 10485760,  # 10MB
+            #     "backupCount": 5,
+            #     "encoding": "utf8"
+            # }
         },
         "loggers": {
             "": {  # root logger
-                "handlers": ["console", "file", "error_file"],
+                "handlers": ["console"],
                 "level": settings.LOG_LEVEL,
                 "propagate": False
             },

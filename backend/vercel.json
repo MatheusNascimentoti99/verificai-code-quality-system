@@ -2,14 +2,23 @@
   "version": 2,
   "builds": [
     {
-      "src": "backend/app/main.py",
-      "use": "@vercel/python"
+      "src": "app/main.py",
+      "use": "@vercel/python",
+      "config": {
+        "maxLambdaSize": "50mb",
+        "runtime": "python3.11"
+      }
     }
   ],
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "backend/app/main.py"
+      "dest": "app/main.py"
     }
-  ]
+  ],
+  "env": {
+    "ENVIRONMENT": "production",
+    "HOST": "0.0.0.0",
+    "PORT": "8000"
+  }
 }

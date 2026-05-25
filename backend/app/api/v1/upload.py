@@ -4,7 +4,7 @@ File upload API endpoints for VerificAI Backend
 
 import os
 import uuid
-import shutil
+import tempfile
 from typing import List, Optional
 from pathlib import Path
 from datetime import datetime
@@ -23,6 +23,7 @@ from app.schemas.upload import (
     FileStatsResponse, UploadValidationResponse, ValidationError
 )
 from app.core.logging import app_logger as logger
+from app.services.storage_provider import get_storage_provider
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
@@ -35,12 +36,24 @@ ALLOWED_EXTENSIONS = {
     'm', 'sh', 'bash', 'zsh', 'sql', 'html', 'css', 'scss', 'sass', 'less',
     'json', 'xml', 'yaml', 'yml', 'toml', 'ini', 'conf', 'config', 'md', 'txt'
 }
-UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", "uploads"))
 
 
 def ensure_upload_dir():
-    """Ensure upload directory exists"""
-    UPLOAD_DIR.mkdir(exist_ok=True)
+    """Ensure upload directory exists; fall back to temp dir if not writable."""
+    global UPLOAD_DIR
+    try:
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        # Try to create a small test file to ensure it's writable
+        test_file = UPLOAD_DIR / ".writetest"
+        with open(test_file, "w") as f:
+            f.write("ok")
+        test_file.unlink()
+    except Exception as e:
+        logger.warning(f"Upload dir {UPLOAD_DIR} not writable: {e}. Falling back to temp dir.")
+        temp_dir = Path(tempfile.gettempdir()) / "verificai_uploads"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        UPLOAD_DIR = temp_dir
 
 
 def validate_file(file: UploadFile, user_id: int) -> UploadValidationResponse:
@@ -100,7 +113,7 @@ async def upload_folder(
     db: Session = Depends(get_db)
 ):
     """Upload multiple files from a folder"""
-    ensure_upload_dir()
+    storage = get_storage_provider()
 
     uploaded_files = []
     failed_files = []
@@ -122,23 +135,27 @@ async def upload_folder(
             # Get relative path from webkitRelativePath if available
             relative_path = getattr(file, 'webkitRelativePath', None) or file.filename
 
-            # Generate file path
-            file_upload_path = get_file_upload_path(file_id, file.filename or "unknown")
-
-            # Save file to disk
-            with open(file_upload_path, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
+            # Save file using configured storage provider
+            file_bytes = await file.read()
+            stored_file = await storage.upload_bytes(
+                user_id=current_user.id,
+                file_id=file_id,
+                original_name=file.filename or "unknown",
+                relative_path=relative_path,
+                content=file_bytes,
+                content_type=file.content_type,
+            )
 
             # Create database record
             uploaded_file = UploadedFile(
                 file_id=file_id,
                 original_name=file.filename or "unknown",
-                file_path=str(file_upload_path),
+                file_path=stored_file.pathname,
                 relative_path=relative_path,
                 file_size=file.size or 0,
                 mime_type=file.content_type or "application/octet-stream",
                 file_extension=Path(file.filename or "unknown").suffix.lower().lstrip('.'),
-                storage_path=str(file_upload_path.absolute()),
+                storage_path=stored_file.locator,
                 status=FileStatus.COMPLETED,
                 upload_progress=100,
                 user_id=current_user.id
@@ -222,7 +239,7 @@ async def upload_file(
     db: Session = Depends(get_db)
 ):
     """Upload a single file"""
-    ensure_upload_dir()
+    storage = get_storage_provider()
 
     # Validate file
     validation = validate_file(file, current_user.id)
@@ -233,23 +250,27 @@ async def upload_file(
         )
 
     try:
-        # Generate file path
-        file_upload_path = get_file_upload_path(file_id, original_name)
-
-        # Save file to disk
-        with open(file_upload_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        # Save file using configured storage provider
+        file_bytes = await file.read()
+        stored_file = await storage.upload_bytes(
+            user_id=current_user.id,
+            file_id=file_id,
+            original_name=original_name,
+            relative_path=relative_path,
+            content=file_bytes,
+            content_type=file.content_type,
+        )
 
         # Create database record
         uploaded_file = UploadedFile(
             file_id=file_id,
             original_name=original_name,
-            file_path=str(file_upload_path),
+            file_path=stored_file.pathname,
             relative_path=relative_path,
             file_size=file.size or 0,
             mime_type=file.content_type or "application/octet-stream",
             file_extension=Path(original_name).suffix.lower().lstrip('.'),
-            storage_path=str(file_upload_path.absolute()),
+            storage_path=stored_file.locator,
             status=FileStatus.COMPLETED,
             upload_progress=100,
             user_id=current_user.id
@@ -279,10 +300,6 @@ async def upload_file(
     except Exception as e:
         logger.error(f"Error uploading file {file_id}: {str(e)}")
 
-        # Clean up uploaded file if database operation failed
-        if file_upload_path.exists():
-            file_upload_path.unlink()
-
         raise HTTPException(status_code=500, detail=f"Failed to upload file: {str(e)}")
 
 
@@ -299,6 +316,8 @@ async def process_uploaded_file(file_id: int, db: Session):
         uploaded_file.is_processed = False
         db.commit()
 
+        storage = get_storage_provider()
+
         # Analyze file
         try:
             # Detect language
@@ -308,9 +327,8 @@ async def process_uploaded_file(file_id: int, db: Session):
 
             # Count lines (simplified - in production would use proper parsing)
             try:
-                # Use the file_path which is relative to current working directory
-                with open(uploaded_file.file_path, 'r', encoding='utf-8') as f:
-                    line_count = sum(1 for _ in f)
+                source_text = await storage.read_text(uploaded_file.storage_path)
+                line_count = source_text.count("\n") + (1 if source_text else 0)
                 uploaded_file.line_count = line_count
             except Exception:
                 pass  # Skip line count for binary files or encoding issues
@@ -473,6 +491,7 @@ async def delete_file(
 ):
     """Delete a single file"""
     try:
+        storage = get_storage_provider()
         file = db.query(UploadedFile).filter(
             and_(
                 UploadedFile.file_id == file_id,
@@ -483,9 +502,8 @@ async def delete_file(
         if not file:
             raise HTTPException(status_code=404, detail="File not found")
 
-        # Delete physical file
-        if Path(file.storage_path).exists():
-            Path(file.storage_path).unlink()
+        # Delete physical/blob file
+        await storage.delete(file.storage_path)
 
         # Also delete from file_paths table
         from app.models.file_path import FilePath
@@ -524,6 +542,7 @@ async def delete_files(
     db: Session = Depends(get_db)
 ):
     """Delete multiple files"""
+    storage = get_storage_provider()
     deleted_files = []
     failed_files = []
 
@@ -540,9 +559,8 @@ async def delete_files(
                 failed_files.append(file_id)
                 continue
 
-            # Delete physical file
-            if Path(file.storage_path).exists():
-                Path(file.storage_path).unlink()
+            # Delete physical/blob file
+            await storage.delete(file.storage_path)
 
             # Also delete from file_paths table
             from app.models.file_path import FilePath

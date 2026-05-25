@@ -1,5 +1,0 @@
-[tool.vercel]
-entrypoint = "backend.server:app"
-
-[tool.vercel.scripts]
-build = "pip install -r requirements.txt"
