@@ -1,5 +1,0 @@
-{
-  "criteria_ids": ["criteria_1", "criteria_9"],
-  "file_paths": ["/app/test_code.ts"],
-  "analysis_name": "Teste de Análise com Critérios"
-}
