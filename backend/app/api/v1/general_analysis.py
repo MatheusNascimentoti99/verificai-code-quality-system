@@ -35,6 +35,7 @@ def get_uploaded_file_path(file_path: str, db: Session, user_id: int) -> str:
     """
     try:
         print(f"DEBUG: get_uploaded_file_path called with: file_path='{file_path}', user_id={user_id}")
+        storage = get_storage_provider()
 
         # Helper function to find the most recent uploaded file.
         # Local files are validated on disk; blob URLs are accepted as-is.
@@ -43,14 +44,13 @@ def get_uploaded_file_path(file_path: str, db: Session, user_id: int) -> str:
             files = files_query.order_by(UploadedFile.created_at.desc()).all()
 
             for uploaded_file in files:
-                import os
                 # Use storage_path for both local and blob storage.
                 file_locator = uploaded_file.storage_path
-                if str(file_locator).startswith("http://") or str(file_locator).startswith("https://"):
+                if str(file_locator).startswith(("http://", "https://", "minio://")):
                     print(f"DEBUG: Found blob file: {uploaded_file.original_name} at {file_locator} from {uploaded_file.created_at}")
                     return uploaded_file, file_locator
 
-                if os.path.exists(file_locator):
+                if storage.path_exists(file_locator):
                     print(f"DEBUG: Found existing local file: {uploaded_file.original_name} at {file_locator} from {uploaded_file.created_at}")
                     return uploaded_file, file_locator
                 else:

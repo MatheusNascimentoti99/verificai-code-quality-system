@@ -15,6 +15,7 @@ from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.user import User
 from app.models.file_path import FilePath
+from app.services.storage_provider import get_storage_provider
 from app.schemas.file_path import (
     FilePathCreate,
     FilePathResponse,
@@ -463,8 +464,8 @@ async def delete_file_path(
 ):
     """Delete a file path and its physical file"""
     try:
-        import os
         from app.models.uploaded_file import UploadedFile
+        storage = get_storage_provider()
 
         file_path = db.query(FilePath).filter(
             FilePath.file_id == file_id,
@@ -488,12 +489,12 @@ async def delete_file_path(
 
         # Delete physical files
         for uploaded_file in uploaded_files:
-            if uploaded_file.storage_path and os.path.exists(uploaded_file.storage_path):
+            if uploaded_file.storage_path:
                 try:
-                    os.remove(uploaded_file.storage_path)
+                    await storage.delete(uploaded_file.storage_path)
                     deleted_physical_files += 1
                     logger.info(f"Deleted physical file: {uploaded_file.storage_path}")
-                except OSError as e:
+                except Exception as e:
                     error_msg = f"Failed to delete physical file {uploaded_file.storage_path}: {str(e)}"
                     logger.error(error_msg)
                     errors.append(error_msg)
@@ -532,8 +533,8 @@ async def delete_file_paths_bulk(
         if len(file_ids) == 0:
             raise HTTPException(status_code=400, detail="No file IDs provided. Use /all to delete all.")
 
-        import os
         from app.models.uploaded_file import UploadedFile
+        storage = get_storage_provider()
 
         # Handle file_id format mismatch: frontend might send 'file_x' instead of 'path_file_x'
         normalized_ids = []
@@ -569,12 +570,12 @@ async def delete_file_paths_bulk(
 
                 # Delete physical files
                 for uploaded_file in uploaded_files:
-                    if uploaded_file.storage_path and os.path.exists(uploaded_file.storage_path):
+                    if uploaded_file.storage_path:
                         try:
-                            os.remove(uploaded_file.storage_path)
+                            await storage.delete(uploaded_file.storage_path)
                             deleted_physical_files += 1
                             logger.info(f"Deleted physical file: {uploaded_file.storage_path}")
-                        except OSError as e:
+                        except Exception as e:
                             error_msg = f"Failed to delete physical file {uploaded_file.storage_path}: {str(e)}"
                             logger.error(error_msg)
                             errors.append(error_msg)

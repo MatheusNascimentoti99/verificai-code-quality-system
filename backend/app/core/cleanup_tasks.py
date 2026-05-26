@@ -1,9 +1,8 @@
-import os
 import logging
-from pathlib import Path
 from sqlalchemy.orm import Session
 from app.models.file_path import FilePath
 from app.models.uploaded_file import UploadedFile
+from app.services.storage_provider import get_storage_provider
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +13,7 @@ def cleanup_invalid_paths(db: Session):
     """
     try:
         logger.info("🧹 Starting Self-Healing Database Cleanup...")
+        storage = get_storage_provider()
         
         # 1. Query all FilePath records
         file_paths = db.query(FilePath).all()
@@ -43,7 +43,7 @@ def cleanup_invalid_paths(db: Session):
             
             # Verify if any of the possible paths exist
             for path_str in possible_paths:
-                if path_str and os.path.exists(path_str):
+                if path_str and storage.path_exists(path_str):
                     file_exists = True
                     break
             

@@ -12,8 +12,7 @@ from sqlalchemy import create_engine
 from app.core.database import get_db
 from app.models.file_path import FilePath
 from app.models.uploaded_file import UploadedFile
-from pathlib import Path
-from app.core.config import settings
+from app.services.storage_provider import get_storage_provider
 
 def cleanup_invalid_paths():
     """Remove file paths que não correspondem a arquivos reais"""
@@ -26,6 +25,7 @@ def cleanup_invalid_paths():
 
     try:
         print("🔍 Iniciando limpeza de file paths inválidos...")
+        storage = get_storage_provider()
 
         # Buscar todos os file paths
         all_paths = db.query(FilePath).all()
@@ -35,18 +35,20 @@ def cleanup_invalid_paths():
         valid_count = 0
 
         for fp in all_paths:
-            # Verificar se o arquivo existe no sistema de arquivos
             file_exists = False
 
-            # Tentar diferentes caminhos possíveis
-            possible_paths = [
-                fp.full_path,
-                settings.UPLOADS_DIR / fp.full_path,  # Verificar no diretório de uploads
-                Path(settings.UPLOADS_DIR) / Path(fp.full_path).name  # Verificar apenas o nome do arquivo no diretório de uploads
-            ]
+            possible_paths = [fp.full_path]
+
+            uploaded_file = db.query(UploadedFile).filter(
+                (UploadedFile.relative_path == fp.full_path) |
+                (UploadedFile.original_name == fp.file_name)
+            ).first()
+
+            if uploaded_file and uploaded_file.storage_path:
+                possible_paths.append(uploaded_file.storage_path)
 
             for path in possible_paths:
-                if Path(path).exists():
+                if path and storage.path_exists(path):
                     file_exists = True
                     break
 
