@@ -6,7 +6,7 @@ Real persistence implemented for prompt configurations
 
 from datetime import datetime
 from typing import List, Optional, Any
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Body
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -16,7 +16,7 @@ from app.models.prompt import Prompt, PromptConfiguration, PromptCategory, Promp
 from app.schemas.prompt import (
     PromptCreate, PromptUpdate, PromptResponse, PromptListResponse,
     PromptSearchFilters, PromptTestRequest, PromptTestResponse,
-    PromptCloneRequest, PromptValidationResult
+    PromptCloneRequest, PromptValidationResult, PromptConfigsUpdate
 )
 from app.schemas.common import PaginatedResponse
 
@@ -24,7 +24,7 @@ router = APIRouter()
 
 
 # Force reload 3 - test file modification again
-@router.get("/prompts/config", response_model=dict)
+@router.get("/config", response_model=dict)
 def get_prompt_config(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -104,9 +104,9 @@ def get_prompt_config(
         return default_config
 
 
-@router.post("/prompts/backup", response_model=dict)
+@router.post("/backup", response_model=dict)
 def create_prompt_backup(
-    prompt_config: dict,
+    prompt_config: PromptConfigsUpdate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> Any:
@@ -119,7 +119,9 @@ def create_prompt_backup(
         # Save each prompt configuration in the database
         saved_configs = []
 
-        for config_key, config_data in prompt_config.items():
+        # Convert Pydantic model to dict
+        config_dict = prompt_config.model_dump(exclude_unset=True)
+        for config_key, config_data in config_dict.items():
             print(f"DEBUG: Processing config key: {config_key}")
             # Check if configuration already exists
             existing_config = db.query(PromptConfiguration).filter(
@@ -179,9 +181,9 @@ def create_prompt_backup(
         }
 
 
-@router.post("/prompts/save", response_model=dict)
+@router.post("/save", response_model=dict)
 def save_prompt_configuration(
-    prompt_config: dict,
+    prompt_config: PromptConfigsUpdate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> Any:
@@ -190,7 +192,9 @@ def save_prompt_configuration(
         # Save each prompt configuration in the database
         saved_configs = []
 
-        for config_key, config_data in prompt_config.items():
+        # Convert Pydantic model to dict
+        config_dict = prompt_config.model_dump(exclude_unset=True)
+        for config_key, config_data in config_dict.items():
             # Check if configuration already exists
             existing_config = db.query(PromptConfiguration).filter(
                 PromptConfiguration.user_id == current_user.id,
@@ -252,7 +256,7 @@ def create_prompt(
     db: Session = Depends(get_db)
 ) -> Any:
     """Create a new prompt"""
-    prompt = Prompt(**prompt_data.dict(), author_id=current_user.id)
+    prompt = Prompt(**prompt_data.model_dump(), author_id=current_user.id)
     db.add(prompt)
     db.commit()
     db.refresh(prompt)
@@ -378,7 +382,7 @@ def update_prompt(
         )
 
     # Update fields
-    for field, value in prompt_data.dict(exclude_unset=True).items():
+    for field, value in prompt_data.model_dump(exclude_unset=True).items():
         setattr(prompt, field, value)
 
     db.commit()

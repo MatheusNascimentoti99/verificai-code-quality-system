@@ -9,6 +9,9 @@ const generateUUID = (): string => {
 };
 import './PathList.css';
 
+// @ts-ignore - Ignore TS error for env variable, Vite will replace this statically
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
+
 interface FilePath {
   id: string;
   fullPath: string;
@@ -18,6 +21,7 @@ interface FilePath {
   fileSize?: number;
   lastModified?: Date;
   created_at?: string;
+  file?: File;
 }
 
 interface PathListProps {
@@ -131,9 +135,13 @@ const PathList: React.FC<PathListProps> = ({
       // Store the complete folder path for display
       setSelectedFolderPath(folderPath);
 
-      // Process files to extract path information
-      const filePaths: FilePath[] = [];
+      const IGNORED_DIRECTORIES = ['node_modules', 'venv', '.venv', '.git', '.idea', '.vscode', '__pycache__', '.pytest_cache', 'dist', 'build', '.next', 'bin', 'obj'];
+      const ALLOWED_EXTENSIONS = ['js', 'jsx', 'ts', 'tsx', 'py', 'java', 'c', 'cpp', 'cxx', 'cc', 'h', 'hpp', 'cs', 'go', 'rs', 'rb', 'php', 'swift', 'kt', 'scala', 'm', 'sh', 'bash', 'zsh', 'sql', 'html', 'css', 'scss', 'sass', 'less', 'json', 'xml', 'yaml', 'yml', 'toml', 'ini', 'conf', 'config', 'md', 'txt'];
 
+      console.log('Filtros ativos:', { ignored: IGNORED_DIRECTORIES, allowedExts: ALLOWED_EXTENSIONS.length });
+
+      let skippedCount = 0;
+      const filePaths: FilePath[] = [];
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         const relativePath = file.webkitRelativePath || '';
@@ -141,31 +149,40 @@ const PathList: React.FC<PathListProps> = ({
         const fileName = pathParts[pathParts.length - 1];
         const folderPath = pathParts.slice(0, -1).join('/');
 
-        // Instead of simulating paths, we'll store the relative path and upload the actual file
-        // The backend will handle file storage and path resolution
+        // Verificar se algum diretório no path deve ser ignorado
+        const shouldIgnore = pathParts.some(part => IGNORED_DIRECTORIES.includes(part));
+        const extension = getFileExtension(fileName);
+        const isAllowedExtension = ALLOWED_EXTENSIONS.includes(extension);
+
+        if (shouldIgnore || !isAllowedExtension) {
+          skippedCount++;
+          continue;
+        }
+
         const relativePathForStorage = relativePath.startsWith(folderPath + '/')
           ? relativePath
           : `${folderPath}/${relativePath}`;
 
         const filePath: FilePath = {
           id: generateUUID(),
-          fullPath: relativePathForStorage, // Store relative path, backend will resolve
+          fullPath: relativePathForStorage,
           fileName,
-          fileExtension: getFileExtension(fileName),
+          fileExtension: extension,
           folderPath,
           fileSize: file.size,
           lastModified: new Date(file.lastModified),
-          file: file // Store the actual File object for upload
+          file: file
         };
 
         filePaths.push(filePath);
 
-        // Update progress
-        setScanProgress(((i + 1) / files.length) * 100);
-
-        // Small delay to show progress
-        await new Promise(resolve => setTimeout(resolve, 50));
+        // Atualizar progresso a cada 10 arquivos para performance
+        if (i % 10 === 0 || i === files.length - 1) {
+          setScanProgress(((i + 1) / files.length) * 100);
+        }
       }
+
+      console.log(`Scan concluído: ${filePaths.length} arquivos aceitos, ${skippedCount} ignorados.`);
 
       // Try to upload files and persist paths to database, but continue even if it fails
       try {
@@ -186,7 +203,7 @@ const PathList: React.FC<PathListProps> = ({
             }
           });
 
-          const response = await fetch('/api/v1/upload/folder', {
+          const response = await fetch(`${API_BASE_URL}/upload/folder`, {
             method: 'POST',
             headers: {
               ...authHeaders
@@ -306,9 +323,9 @@ const PathList: React.FC<PathListProps> = ({
       const authHeaders = getAuthHeaders();
       console.log('🔑 Auth headers:', Object.keys(authHeaders));
 
-      const requestUrl = '/api/v1/file-paths/public';
+      const requestUrl = `${API_BASE_URL}/file-paths/public`;
       console.log('🌐 Fazendo requisição para endpoint público (todos os arquivos):', requestUrl);
-      console.log('📍 URL completa:', window.location.origin + requestUrl);
+      console.log('📍 URL completa:', requestUrl);
 
       const response = await fetch(requestUrl);
 
@@ -331,16 +348,21 @@ const PathList: React.FC<PathListProps> = ({
       // Transform backend response to frontend format
       // Public endpoint returns just strings (paths), so we need to create objects
       const transformedPaths = (result.file_paths || []).map((path: any, index: number) => {
-        // If path is already an object (from other endpoints), keep structure
+        // If path is already an object (from our new public endpoint or other endpoints), keep structure
         if (typeof path === 'object' && path !== null) {
+          const fullPath = path.full_path || path.fullPath || '';
+          const fileName = path.file_name || path.fileName || fullPath.split(/[\\/]/).pop() || '';
+          const fileExtension = path.file_extension || path.fileExtension || (fileName.includes('.') ? fileName.split('.').pop() : '');
+          const folderPath = path.folder_path || path.folderPath || (fullPath.includes('/') ? fullPath.split('/')[0] : '');
+
           return {
-            id: path.file_id || path.id,
-            fullPath: path.full_path,
-            fileName: path.file_name,
-            fileExtension: path.file_extension,
-            folderPath: path.folder_path,
-            fileSize: path.file_size,
-            lastModified: path.last_modified ? new Date(path.last_modified) : undefined,
+            id: path.file_id || path.id || `path_${index}`,
+            fullPath: fullPath,
+            fileName: fileName,
+            fileExtension: fileExtension || '',
+            folderPath: folderPath,
+            fileSize: path.file_size || path.fileSize,
+            lastModified: path.last_modified || path.lastModified ? new Date(path.last_modified || path.lastModified) : undefined,
             created_at: path.created_at
           };
         }
@@ -459,7 +481,7 @@ const PathList: React.FC<PathListProps> = ({
       const { getAuthHeaders } = await import('@/utils/auth');
       const authHeaders = getAuthHeaders();
 
-      const response = await fetch('/api/v1/file-paths/', {
+      const response = await fetch(`${API_BASE_URL}/file-paths/`, {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',
@@ -503,7 +525,7 @@ const PathList: React.FC<PathListProps> = ({
       const { getAuthHeaders } = await import('@/utils/auth');
       const authHeaders = getAuthHeaders();
 
-      const response = await fetch('/api/v1/file-paths/', {
+      const response = await fetch(`${API_BASE_URL}/file-paths/`, {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',
@@ -584,6 +606,40 @@ const PathList: React.FC<PathListProps> = ({
     });
   };
 
+  const handleCleanupInvalid = async () => {
+    if (!confirm('Tem certeza que deseja limpar os caminhos órfãos? Isso vai remover do banco de dados todos os arquivos que não existem mais no disco do servidor (útil se o servidor reiniciou).')) {
+      return;
+    }
+
+    try {
+      console.log('🧹 Limpando caminhos órfãos...');
+      const { getAuthHeaders } = await import('@/utils/auth');
+      const authHeaders = getAuthHeaders();
+
+      const response = await fetch(`${API_BASE_URL}/file-paths/cleanup-invalid`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders
+        }
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        alert(`Limpeza concluída! Removidos: ${result.removed_count} arquivos órfãos. Mantidos: ${result.kept_count} arquivos válidos.`);
+        // Recarregar a lista
+        loadPaths();
+      } else {
+        const errorText = await response.text();
+        console.error('Erro na limpeza:', errorText);
+        alert('Erro ao limpar arquivos órfãos. Por favor, tente novamente.');
+      }
+    } catch (error) {
+      console.error('Erro na limpeza:', error);
+      alert('Erro ao limpar arquivos órfãos. Por favor, verifique a conexão.');
+    }
+  };
+
   const exportToCSV = () => {
     const csvContent = [
       ['File Path', 'File Name', 'Extension', 'Folder Path', 'Size', 'Modified'],
@@ -647,11 +703,13 @@ const PathList: React.FC<PathListProps> = ({
     <div className="path-list">
       {/* Hidden file input for folder selection */}
       <input
+        // @ts-ignore - React typing doesn't officially support these standard HTML attributes for directory selection
+        webkitdirectory="true"
+        // @ts-ignore
+        directory="true"
         ref={fileInputRef}
         id="folder-input"
         type="file"
-        webkitdirectory=""
-        directory=""
         multiple
         className="hidden"
         onChange={handleFileInputChange}
@@ -742,6 +800,15 @@ const PathList: React.FC<PathListProps> = ({
             type="button"
           >
             Exportar CSV
+          </button>
+
+          <button
+            onClick={handleCleanupInvalid}
+            className="br-button secondary"
+            type="button"
+            title="Remove registros de arquivos que não existem mais no servidor"
+          >
+            🧹 Limpar Órfãos
           </button>
 
           <button

@@ -457,7 +457,7 @@ async def update_code_entry(
         raise HTTPException(status_code=404, detail="Code entry not found")
 
     # Update fields if provided
-    update_data = code_entry_update.dict(exclude_unset=True)
+    update_data = code_entry_update.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(code_entry, field, value)
 

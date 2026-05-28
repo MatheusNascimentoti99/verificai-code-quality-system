@@ -13,16 +13,25 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
     networks:
       - verificai-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U verificai -d verificai"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   # Redis Cache
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
     networks:
       - verificai-network
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   # Backend API
   backend:
@@ -41,15 +50,30 @@ services:
       - PYTHONUNBUFFERED=1
       - ANTHROPIC_BASE_URL
       - ANTHROPIC_AUTH_TOKEN
+      # - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      # - OPENROUTER_MODEL=${OPENROUTER_MODEL}
+      - UPLOAD_DIR=${UPLOAD_DIR}
+      - STORAGE_PROVIDER=${STORAGE_PROVIDER}
+      - BLOB_ACCESS=${BLOB_ACCESS}
+      - BLOB_STORE_ID=${BLOB_STORE_ID}
+      - BLOB_READ_WRITE_TOKEN=${BLOB_READ_WRITE_TOKEN}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - MODEL=${MODEL}
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - ./backend:/app
       - backend-cache:/tmp/cache
     networks:
       - verificai-network
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --log-level debug --reload-delay 1
 
   # Frontend
@@ -76,41 +100,12 @@ services:
     networks:
       - verificai-network
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
     
 
-  # Celery Worker (for async tasks)
-  celery:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    environment:
-      - DATABASE_URL=postgresql://verificai:verificai123@postgres:5432/verificai
-      - REDIS_URL=redis://redis:6379
-    depends_on:
-      - postgres
-      - redis
-    volumes:
-      - ./backend:/app
-    networks:
-      - verificai-network
-    command: celery -A celery_app worker --loglevel=info
-
-  # Celery Beat (for scheduled tasks)
-  celery-beat:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    environment:
-      - DATABASE_URL=postgresql://verificai:verificai123@postgres:5432/verificai
-      - REDIS_URL=redis://redis:6379
-    depends_on:
-      - postgres
-      - redis
-    volumes:
-      - ./backend:/app
-    networks:
-      - verificai-network
-    command: python -m celery -A celery_app beat --loglevel=info
 
 volumes:
   postgres_data:

@@ -274,8 +274,10 @@ const BusinessDocumentUpload: React.FC<BusinessDocumentUploadProps> = ({
             ref={fileInputRef}
             id="business-folder-input"
             type="file"
-            webkitdirectory=""
-            directory=""
+            // @ts-ignore
+            webkitdirectory="true"
+            // @ts-ignore
+            directory="true"
             multiple
             className="hidden"
             onChange={handleFileInputChange}

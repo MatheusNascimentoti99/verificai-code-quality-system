@@ -1,16 +1,19 @@
 """
-Configuration management for VerificAI Backend
+Configuration management for VerificAI Backend - Demo Mode
 """
 
 import os
 from typing import List, Optional
-from pydantic import AnyHttpUrl, Field, field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
     """Application settings with environment variable support"""
 
+    # Default password for demo purposes only. Change in production!
+    ADMIN_PASSWORD: str = Field(default="Admin@2024", env="ADMIN_PASSWORD")  
+    
     # Project Information
     PROJECT_NAME: str = "VerificAI Code Quality System"
     VERSION: str = "1.0.0"
@@ -21,53 +24,41 @@ class Settings(BaseSettings):
     PORT: int = Field(default=8000, env="PORT")
     DEBUG: bool = Field(default=False, env="DEBUG")
 
-    # Database Configuration
+    # Database Configuration - supports Supabase postgres:// URLs
     DATABASE_URL: str = Field(
-        default="postgresql://verificai:verificai123@localhost:5432/verificai",
+        default="sqlite:///./verificai.db",
         env="DATABASE_URL"
     )
 
-    # Ensure PostgreSQL configuration
     @field_validator('DATABASE_URL', mode='before')
     @classmethod
-    def validate_database_url(cls, v):
-        """Force PostgreSQL configuration"""
+    def fix_database_url(cls, v):
+        """Fix Supabase/Render postgres:// format to postgresql://"""
         if not v:
-            return "postgresql://verificai:verificai123@localhost:5432/verificai"
-
-        # Ensure it's PostgreSQL
-        if not v.startswith('postgresql'):
-            print(f"WARNING: Non-PostgreSQL database detected: {v}")
-            return "postgresql://verificai:verificai123@localhost:5432/verificai"
-
-        print(f"Using PostgreSQL database: {v}")
+            return "sqlite:///./verificai.db"
+        if v.startswith("postgres://"):
+            return v.replace("postgres://", "postgresql://", 1)
         return v
-
-    # Database Connection Pool Settings
-    DATABASE_POOL_SIZE: int = Field(default=20, env="DATABASE_POOL_SIZE")
-    DATABASE_MAX_OVERFLOW: int = Field(default=10, env="DATABASE_MAX_OVERFLOW")
-    DATABASE_POOL_TIMEOUT: int = Field(default=30, env="DATABASE_POOL_TIMEOUT")
-    DATABASE_POOL_RECYCLE: int = Field(default=3600, env="DATABASE_POOL_RECYCLE")
-
-    # Redis Configuration
-    REDIS_URL: str = Field(default="redis://localhost:6379", env="REDIS_URL")
-    REDIS_MAX_CONNECTIONS: int = Field(default=10, env="REDIS_MAX_CONNECTIONS")
 
     # Security Configuration
     SECRET_KEY: str = Field(
-        default="your-secret-key-here-change-in-production",
+        default="change-this-secret-key-in-production-min-32-chars",
         env="SECRET_KEY"
     )
     JWT_SECRET_KEY: str = Field(
-        default="your-jwt-secret-key-here",
+        default="change-this-jwt-key-in-production-min-32-chars",
         env="JWT_SECRET_KEY"
     )
     JWT_ALGORITHM: str = Field(default="HS256", env="JWT_ALGORITHM")
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=30, env="ACCESS_TOKEN_EXPIRE_MINUTES")
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=1440, env="ACCESS_TOKEN_EXPIRE_MINUTES")  # 24h
 
-    # CORS Configuration
+    # CORS Configuration - accepts frontend URLs from Vercel/localhost
     BACKEND_CORS_ORIGINS: List[str] = Field(
-        default=["http://localhost:3000", "http://localhost:5173", "http://localhost:3026", "http://localhost:3015", "http://localhost:3014", "http://localhost:3013", "http://localhost:3011"],
+        default=[
+            "http://localhost:3000",
+            "http://localhost:3011",
+            "http://localhost:5173",
+        ],
         env="BACKEND_CORS_ORIGINS"
     )
 
@@ -84,21 +75,32 @@ class Settings(BaseSettings):
     # LLM API Configuration
     OPENAI_API_KEY: Optional[str] = Field(default=None, env="OPENAI_API_KEY")
     ANTHROPIC_API_KEY: Optional[str] = Field(default=None, env="ANTHROPIC_API_KEY")
+    GEMINI_API_KEY: Optional[str] = Field(default=None, env="GEMINI_API_KEY")
+    OPENROUTER_API_KEY: Optional[str] = Field(default=None, env="OPENROUTER_API_KEY")
 
     # LLM Configuration
-    MAX_TOKENS: int = Field(default=16000, env="MAX_TOKENS")
+    MAX_TOKENS: int = Field(default=8000, env="MAX_TOKENS")
     TEMPERATURE: float = Field(default=0.1, env="TEMPERATURE")
-    TOP_P: float = Field(default=0.9, env="TOP_P")
-    MODEL: str = Field(default="claude-3-5-sonnet-20241022", env="MODEL")
+    MODEL: str = Field(default="openai/gpt-4o-mini", env="MODEL")
+    OPENROUTER_MODEL: str = Field(default="openai/gpt-4o-mini", env="OPENROUTER_MODEL")
 
-    # Rate Limiting Configuration
-    RATE_LIMIT_REQUESTS_PER_MINUTE: int = Field(default=60, env="RATE_LIMIT_REQUESTS_PER_MINUTE")
+    # Rate Limiting
+    RATE_LIMIT_REQUESTS_PER_MINUTE: int = Field(default=30, env="RATE_LIMIT_REQUESTS_PER_MINUTE")
     RATE_LIMIT_BURST: int = Field(default=10, env="RATE_LIMIT_BURST")
 
     # File Upload Configuration
-    MAX_FILE_SIZE: int = Field(default=104857600, env="MAX_FILE_SIZE")  # 100MB
+    MAX_FILE_SIZE: int = Field(default=10485760, env="MAX_FILE_SIZE")  # 10MB (reduzido para demo)
+    STORAGE_PROVIDER: str = Field(default="auto", env="STORAGE_PROVIDER")  # auto | local | vercel_blob | minio
+    UPLOAD_DIR: str = Field(default="uploads", env="UPLOAD_DIR")
+    BLOB_ACCESS: str = Field(default="private", env="BLOB_ACCESS")  # private | public
+    BLOB_READ_WRITE_TOKEN: Optional[str] = Field(default=None, env="BLOB_READ_WRITE_TOKEN")
+    MINIO_ENDPOINT: Optional[str] = Field(default=None, env="MINIO_ENDPOINT")
+    MINIO_BUCKET: str = Field(default="verificai", env="MINIO_BUCKET")
+    MINIO_ACCESS_KEY: Optional[str] = Field(default=None, env="MINIO_ACCESS_KEY")
+    MINIO_SECRET_KEY: Optional[str] = Field(default=None, env="MINIO_SECRET_KEY")
+    MINIO_SECURE: bool = Field(default=False, env="MINIO_SECURE")
     ALLOWED_EXTENSIONS: List[str] = Field(
-        default=[".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".cpp", ".c", ".h", ".hpp", ".cs", ".php", ".rb", ".go", ".rs"],
+        default=[".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".cpp", ".c", ".h", ".cs", ".php", ".rb", ".go", ".rs"],
         env="ALLOWED_EXTENSIONS"
     )
 
@@ -113,7 +115,7 @@ class Settings(BaseSettings):
         "case_sensitive": True,
         "env_file": ".env",
         "env_file_encoding": "utf-8",
-        "extra": "ignore"  # Allow extra environment variables
+        "extra": "ignore"
     }
 
 

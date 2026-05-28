@@ -39,7 +39,7 @@ def register(
         )
 
     # Create new user
-    user = User(**user_data.dict(exclude={"confirm_password"}))
+    user = User(**user_data.model_dump(exclude={"confirm_password"}))
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -161,49 +161,64 @@ def login_json(
     db: Session = Depends(get_db)
 ) -> Any:
     """Login user using JSON payload"""
-    user = db.query(User).filter(User.username == user_data.username).first()
+    try:
+        user = db.query(User).filter(User.username == user_data.username).first()
 
-    if not user or not user.verify_password(user_data.password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
+        if not user or not user.verify_password(user_data.password):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect username or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Inactive user"
+            )
+
+        # Update last login
+        user.update_last_login()
+        db.commit()
+
+        # Create access token
+        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = create_access_token(
+            subject=user.username, expires_delta=access_token_expires
         )
+        
+        # Safely handle role which might be Enum or string
+        user_role = getattr(user.role, 'value', user.role) if user.role else "QA_ENGINEER"
 
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Inactive user"
-        )
-
-    # Update last login
-    user.update_last_login()
-    db.commit()
-
-    # Create access token
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        subject=user.username, expires_delta=access_token_expires
-    )
-
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-        "user": {
-            "id": user.id,
-            "username": user.username,
-            "email": user.email,
-            "full_name": user.full_name,
-            "role": user.role.value,
-            "is_active": user.is_active,
-            "is_verified": user.is_verified,
-            "bio": user.bio,
-            "avatar_url": user.avatar_url,
-            "preferred_language": user.preferred_language,
-            "timezone": user.timezone
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "full_name": user.full_name,
+                "role": user_role,
+                "is_active": user.is_active,
+                "is_verified": user.is_verified,
+                "bio": user.bio,
+                "avatar_url": getattr(user, 'avatar_url', None),
+                "preferred_language": getattr(user, 'preferred_language', 'pt-BR'),
+                "timezone": getattr(user, 'timezone', 'UTC')
+            }
         }
-    }
+    except HTTPException:
+        # Re-raise standard HTTP exceptions 
+        raise
+    except Exception as e:
+        # Fallback error wrapper properly serialized
+        import logging
+        logging.error(f"Login JSON error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal Server Error during login: {str(e)}"
+        )
 
 
 @router.get("/me", response_model=UserResponse)

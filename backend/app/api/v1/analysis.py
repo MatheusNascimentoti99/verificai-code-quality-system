@@ -43,12 +43,16 @@ def create_analysis(
             detail="Access denied to prompt"
         )
 
+    analysis_dict = analysis_data.model_dump()
+    file_paths = analysis_dict.pop("file_paths", [])
+
     # Create analysis
     analysis = Analysis(
-        **analysis_data.dict(),
+        **analysis_dict,
         user_id=current_user.id,
         status=AnalysisStatus.PENDING
     )
+    analysis.set_file_paths(file_paths)
     db.add(analysis)
     db.commit()
     db.refresh(analysis)
@@ -210,7 +214,7 @@ def update_analysis(
         )
 
     # Update fields
-    for field, value in analysis_data.dict(exclude_unset=True).items():
+    for field, value in analysis_data.model_dump(exclude_unset=True).items():
         setattr(analysis, field, value)
 
     db.commit()

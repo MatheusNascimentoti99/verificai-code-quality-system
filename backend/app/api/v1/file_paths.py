@@ -15,6 +15,7 @@ from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.user import User
 from app.models.file_path import FilePath
+from app.services.storage_provider import get_storage_provider
 from app.schemas.file_path import (
     FilePathCreate,
     FilePathResponse,
@@ -37,15 +38,18 @@ async def get_public_file_paths(db: Session = Depends(get_db)):
         # Get ALL file paths without user filtering - NO LIMIT
         file_paths = db.query(FilePath).order_by(desc(FilePath.created_at)).all()
 
-        # Extract just the full paths for simplicity
-        paths = [fp.full_path for fp in file_paths if fp.full_path]
+        # Extract objects with both path and ID for proper frontend synchronization
+        paths_data = [
+            {"full_path": fp.full_path, "file_id": fp.file_id} 
+            for fp in file_paths if fp.full_path
+        ]
 
-        logger.info(f"🔥🔥🔥 Public endpoint returning {len(paths)} file paths - ALL FILES - NO LIMIT 🔥🔥🔥")
+        logger.info(f"🔥🔥🔥 Public endpoint returning {len(paths_data)} file paths - ALL FILES - NO LIMIT 🔥🔥🔥")
 
         return {
-            "file_paths": paths,
-            "total_count": len(paths),
-            "message": f"Found {len(paths)} file paths - ALL FILES"
+            "file_paths": paths_data,
+            "total_count": len(paths_data),
+            "message": f"Found {len(paths_data)} file paths - ALL FILES"
         }
 
     except Exception as e:
@@ -144,6 +148,72 @@ async def test_endpoint():
     """Test endpoint to verify router is working"""
     return {"message": "File paths router is working!"}
 
+@router.post("/cleanup-invalid")
+async def cleanup_invalid_paths_endpoint(
+    db: Session = Depends(get_db)
+):
+    """Remove file paths lacking physical files (useful for Render ephemeral disk resets)"""
+    try:
+        from app.models.uploaded_file import UploadedFile
+        import os
+        from pathlib import Path
+        
+        all_paths = db.query(FilePath).all()
+        invalid_count = 0
+        valid_count = 0
+        errors = []
+        
+        for fp in all_paths:
+            file_exists = False
+            
+            # Check uploaded files table first for physical path mapping
+            uploaded = db.query(UploadedFile).filter(
+                (UploadedFile.relative_path == fp.full_path) | 
+                (UploadedFile.original_name == fp.file_name)
+            ).order_by(UploadedFile.created_at.desc()).first()
+            
+            possible_paths = [
+                fp.full_path,
+                f"uploads/{fp.full_path}",
+                f"/app/uploads/{fp.full_path}",
+                f"/app/{fp.full_path}",
+            ]
+            
+            if uploaded and uploaded.storage_path:
+                possible_paths.append(uploaded.storage_path)
+                
+            for path in possible_paths:
+                if path and Path(path).exists():
+                    file_exists = True
+                    break
+                    
+            if not file_exists:
+                try:
+                    # Clear uploaded file associations first if any
+                    if uploaded:
+                        db.delete(uploaded)
+                    db.delete(fp)
+                    invalid_count += 1
+                except Exception as del_err:
+                    db.rollback()
+                    errors.append(f"Could not delete {fp.file_id}: {str(del_err)}")
+            else:
+                valid_count += 1
+                
+        if invalid_count > 0:
+            db.commit()
+            
+        return {
+            "success": True, 
+            "removed_count": invalid_count, 
+            "kept_count": valid_count,
+            "errors": errors
+        }
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error during cleanup: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.post("/bulk", response_model=FilePathBulkResponse)
 async def create_file_paths_bulk(
@@ -171,7 +241,7 @@ async def create_file_paths_bulk(
 
                 # Create new file path
                 db_file_path = FilePath(
-                    **file_path_data.dict(),
+                    **file_path_data.model_dump(),
                     user_id=current_user.id
                 )
                 db.add(db_file_path)
@@ -216,7 +286,7 @@ async def create_file_path(
 
         # Create new file path
         db_file_path = FilePath(
-            **file_path_data.dict(),
+            **file_path_data.model_dump(),
             user_id=current_user.id
         )
         db.add(db_file_path)
@@ -321,7 +391,7 @@ async def update_file_path(
             raise HTTPException(status_code=404, detail="File path not found")
 
         # Update fields
-        update_data = file_path_data.dict(exclude_unset=True)
+        update_data = file_path_data.model_dump(exclude_unset=True)
         for field, value in update_data.items():
             setattr(file_path, field, value)
 
@@ -394,8 +464,8 @@ async def delete_file_path(
 ):
     """Delete a file path and its physical file"""
     try:
-        import os
         from app.models.uploaded_file import UploadedFile
+        storage = get_storage_provider()
 
         file_path = db.query(FilePath).filter(
             FilePath.file_id == file_id,
@@ -419,12 +489,12 @@ async def delete_file_path(
 
         # Delete physical files
         for uploaded_file in uploaded_files:
-            if uploaded_file.storage_path and os.path.exists(uploaded_file.storage_path):
+            if uploaded_file.storage_path:
                 try:
-                    os.remove(uploaded_file.storage_path)
+                    await storage.delete(uploaded_file.storage_path)
                     deleted_physical_files += 1
                     logger.info(f"Deleted physical file: {uploaded_file.storage_path}")
-                except OSError as e:
+                except Exception as e:
                     error_msg = f"Failed to delete physical file {uploaded_file.storage_path}: {str(e)}"
                     logger.error(error_msg)
                     errors.append(error_msg)
@@ -463,12 +533,22 @@ async def delete_file_paths_bulk(
         if len(file_ids) == 0:
             raise HTTPException(status_code=400, detail="No file IDs provided. Use /all to delete all.")
 
-        import os
         from app.models.uploaded_file import UploadedFile
+        storage = get_storage_provider()
+
+        # Handle file_id format mismatch: frontend might send 'file_x' instead of 'path_file_x'
+        normalized_ids = []
+        for fid in file_ids:
+            if fid.startswith("path_"):
+                normalized_ids.append(fid)
+                normalized_ids.append(fid.replace("path_", "", 1))
+            else:
+                normalized_ids.append(fid)
+                normalized_ids.append(f"path_{fid}")
 
         # Get file paths before deletion to know which physical files to delete
         file_paths_to_delete = db.query(FilePath).filter(
-            FilePath.file_id.in_(file_ids),
+            FilePath.file_id.in_(normalized_ids),
             FilePath.user_id == current_user.id
         ).all()
 
@@ -490,12 +570,12 @@ async def delete_file_paths_bulk(
 
                 # Delete physical files
                 for uploaded_file in uploaded_files:
-                    if uploaded_file.storage_path and os.path.exists(uploaded_file.storage_path):
+                    if uploaded_file.storage_path:
                         try:
-                            os.remove(uploaded_file.storage_path)
+                            await storage.delete(uploaded_file.storage_path)
                             deleted_physical_files += 1
                             logger.info(f"Deleted physical file: {uploaded_file.storage_path}")
-                        except OSError as e:
+                        except Exception as e:
                             error_msg = f"Failed to delete physical file {uploaded_file.storage_path}: {str(e)}"
                             logger.error(error_msg)
                             errors.append(error_msg)
@@ -510,9 +590,9 @@ async def delete_file_paths_bulk(
 
         # Delete the file path records from database
         deleted_db_records = db.query(FilePath).filter(
-            FilePath.file_id.in_(file_ids),
+            FilePath.file_id.in_(normalized_ids),
             FilePath.user_id == current_user.id
-        ).delete()
+        ).delete(synchronize_session=False)
 
         db.commit()
 

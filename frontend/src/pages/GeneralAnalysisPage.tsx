@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Download, Upload, Settings, FileText, AlertCircle, Trash2, RefreshCw, Eye } from 'lucide-react';
+import { Download, Upload, Settings, FileText, AlertCircle, Trash2, RefreshCw, Eye, FolderOpen, ArrowRight } from 'lucide-react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
-import apiClient from '@/services/apiClient';
+import { Routes, Route, Navigate, Link } from 'react-router-dom';
+import { useAuthStore } from '@/stores/authStore';
+import apiClient, { isLocalBackend } from '@/services/apiClient';
 import CriteriaList from '@/components/features/Analysis/CriteriaList';
 import ProgressTracker from '@/components/features/Analysis/ProgressTracker';
 import ResultsTable from '@/components/features/Analysis/ResultsTable';
@@ -11,10 +13,12 @@ import LatestResponseViewer from '@/components/features/Analysis/LatestResponseV
 import { useUploadStore } from '@/stores/uploadStore';
 import { criteriaService } from '@/services/criteriaService';
 import { analysisService, type AnalysisRequest, type AnalysisResponse } from '@/services/analysisService';
-// import Modal from '@/components/common/Modal';
-// import Alert from '@/components/common/Alert';
 // import Button from '@/components/common/Button';
 import './GeneralAnalysisPage.css';
+
+// @ts-ignore
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
+
 
 interface CriteriaResult {
   id?: number;
@@ -70,6 +74,8 @@ const GeneralAnalysisPage: React.FC = () => {
   console.log('  - dbFilePaths:', dbFilePaths);
   console.log('  - dbFilePaths.length:', dbFilePaths.length);
 
+  const [currentAnalysis, setCurrentAnalysis] = useState<any>(null);
+
   // Função para recarregar paths do banco de dados
   const reloadDbPaths = async () => {
     try {
@@ -77,9 +83,9 @@ const GeneralAnalysisPage: React.FC = () => {
 
       // Tentar diferentes endpoints
       const endpoints = [
-        '/api/v1/file-paths/dev-paths',
-        '/public/file-paths',
-        '/api/v1/file-paths/test'
+        `${API_BASE_URL}/file-paths/dev-paths`,
+        `${API_BASE_URL}/file-paths/public`,
+        `${API_BASE_URL}/file-paths/test`
       ];
 
       for (const endpoint of endpoints) {
@@ -156,11 +162,11 @@ const GeneralAnalysisPage: React.FC = () => {
     console.log('⚠️ Nenhum path encontrado no banco de dados!');
     return [];
   }, [dbFilePaths]);
-  const [currentAnalysis, setCurrentAnalysis] = useState<any>(null);
+
   const [results, setResults] = useState<CriteriaResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [resultsManuallyCleared, setResultsManuallyCleared] = useState(false);
-    const [activeTab, setActiveTab] = useState<'criteria' | 'results' | 'prompt' | 'response'>('criteria');
+  const [activeTab, setActiveTab] = useState<'criteria' | 'results' | 'prompt' | 'response'>('criteria');
   const [selectedCriteriaIds, setSelectedCriteriaIds] = useState<string[]>([]);
   const [showProgress, setShowProgress] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -198,11 +204,11 @@ const GeneralAnalysisPage: React.FC = () => {
           const criteriaTextToIdMap = new Map<string, number>();
           console.log('🔍 Carregando critérios para mapeamento:', allCriteria.length);
           allCriteria.forEach(criterion => {
-            criteriaTextToIdMap.set(criterion.text, criterion.id);
+            criteriaTextToIdMap.set(criterion.text, Number(criterion.id));
             // Também mapear versões curtas do texto
             const shortText = criterion.text.split(':')[0].trim();
             if (shortText !== criterion.text) {
-              criteriaTextToIdMap.set(shortText, criterion.id);
+              criteriaTextToIdMap.set(shortText, Number(criterion.id));
             }
           });
 
@@ -676,9 +682,9 @@ const GeneralAnalysisPage: React.FC = () => {
       // Excluir resultados do banco de dados
       if (uniqueDatabaseResultIds.length > 0) {
         if (uniqueDatabaseResultIds.length === 1) {
-          await analysisService.deleteAnalysisResult(uniqueDatabaseResultIds[0]);
+          await analysisService.deleteAnalysisResult(uniqueDatabaseResultIds[0] as number);
         } else {
-          await analysisService.deleteMultipleAnalysisResults(uniqueDatabaseResultIds);
+          await analysisService.deleteMultipleAnalysisResults(uniqueDatabaseResultIds as number[]);
         }
       }
 
@@ -892,9 +898,19 @@ const GeneralAnalysisPage: React.FC = () => {
 
       console.log(`✅ Análise individual concluída com sucesso para: ${criterionObj.text}`);
 
-    } catch (error) {
-      console.error('Erro na análise do critério:', error);
-      alert('Erro ao analisar o critério. Por favor, tente novamente.');
+    } catch (error: any) {
+      console.error('❌ Erro na análise do critério:', error);
+      const errorMessage = error.message || error.response?.data?.message || 'Erro desconhecido';
+      const errorDetail = error.details ? `\nDetalhes: ${JSON.stringify(error.details)}` : '';
+      
+      console.error('Dados completos do erro:', {
+        message: errorMessage,
+        code: error.code,
+        status: error.status,
+        details: error.details
+      });
+
+      alert(`Erro ao analisar o critério: ${errorMessage}${errorDetail}\n\nVerifique o console (F12) para mais detalhes.`);
       setShowProgress(false);
       setProgress(0);
     } finally {
@@ -1238,9 +1254,26 @@ const GeneralAnalysisPage: React.FC = () => {
         alert(`Análise concluída com sucesso!\n\nModelo: ${response.model_used}\nCritérios analisados: ${response.criteria_count}\nTokens usados: ${response.usage.total_tokens || 'N/A'}`);
       }, 500);
 
-    } catch (error) {
-      console.error('Erro na análise:', error);
-      alert(`Erro ao realizar análise: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
+    } catch (error: any) {
+      console.error('❌ Erro na análise geral:', error);
+      let errorMessage = error.message || error.response?.data?.message || 'Erro desconhecido';
+      const errorDetail = error.details ? `\nDetalhes: ${JSON.stringify(error.details)}` : '';
+      
+      // Melhora a mensagem de erro para o usuário se for falha de leitura de arquivos
+      if (errorMessage.includes('Nenhum código pôde ser lido')) {
+        errorMessage = `⚠️ Falha de Acesso: O servidor não conseguiu ler os arquivos para análise.\n\n` +
+          `DICA: Se você estiver usando o link da Vercel, o servidor não consegue acessar seus arquivos locais (unidade K:\\, C:\\, etc). ` +
+          `Por favor, use o botão "Selecionar Pasta" ou "Colar Código" para realizar o upload antes de analisar.`;
+      }
+
+      console.error('Dados completos do erro:', {
+        message: errorMessage,
+        code: error.code,
+        status: error.status,
+        details: error.details
+      });
+
+      alert(`Erro ao realizar análise: ${errorMessage}${errorDetail}\n\nVerifique o console (F12) para mais detalhes.`);
 
       // Keep progress showing on error to indicate failure
       setTimeout(() => {
@@ -1624,9 +1657,48 @@ const GeneralAnalysisPage: React.FC = () => {
   
       {/* Tab Content */}
       <div className="br-container">
+        {/* Files indexed for analysis awareness */}
+        <div className="br-card mb-4" style={{ border: '1px solid #dee2e6' }}>
+          <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center' }}>
+              <FileText className="w-5 h-5 mr-2 text-blue-600" />
+              <h3 className="text-h3" style={{ fontSize: '1.1rem', margin: 0 }}>
+                Arquivos para Análise ({dbFilePaths.length})
+              </h3>
+            </div>
+            {dbFilePaths.length > 0 && (
+              <Link to="/code-upload" className="br-button secondary small">
+                <Upload className="w-4 h-4 mr-2" />
+                Gerenciar Uploads
+              </Link>
+            )}
+          </div>
+          <div className="card-content" style={{ maxHeight: '200px', overflowY: 'auto', backgroundColor: '#f9f9f9', padding: '0.5rem' }}>
+            {dbFilePaths.length > 0 ? (
+              <ul className="br-list" style={{ margin: 0 }}>
+                {dbFilePaths.map((path, idx) => (
+                  <li key={idx} style={{ padding: '4px 10px', borderBottom: '1px solid #eee', fontSize: '13px' }}>
+                    <code style={{ color: '#1351b4' }}>{path}</code>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
+                <AlertCircle className="w-8 h-8 mx-auto mb-2 text-warning" />
+                <p>Nenhum arquivo encontrado no banco de dados.</p>
+                <Link to="/code-upload" className="br-button primary mt-3">
+                  <ArrowRight className="w-4 h-4 mr-2" />
+                  Ir para Tela de Upload
+                </Link>
+              </div>
+            )}
+          </div>
+        </div>
+
         {activeTab === 'criteria' && (
           <CriteriaList
             onCriteriaSelect={(selected) => console.log('Selected criteria:', selected)}
+            // @ts-ignore - mismatch in Criterion type definition interface
             onAnalyzeCriterion={handleAnalyzeCriterion}
             onAnalyzeSelected={(selected) => handleAnalyzeSelected(selected)}
             onCriteriaChange={refreshResults}

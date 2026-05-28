@@ -34,7 +34,7 @@ def update_current_user(
     db: Session = Depends(get_db)
 ) -> Any:
     """Update current user information"""
-    for field, value in user_data.dict(exclude_unset=True).items():
+    for field, value in user_data.model_dump(exclude_unset=True).items():
         setattr(current_user, field, value)
 
     db.commit()
@@ -214,7 +214,7 @@ def update_user(
             detail="User not found"
         )
 
-    for field, value in user_data.dict(exclude_unset=True).items():
+    for field, value in user_data.model_dump(exclude_unset=True).items():
         setattr(user, field, value)
 
     db.commit()

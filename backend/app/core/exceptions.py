@@ -133,11 +133,11 @@ class DuplicateResourceError(BaseAPIException):
 class NotFoundError(BaseAPIException):
     """Resource not found"""
 
-    def __init__(
-        self,
-        resource_type: str,
-        identifier: str
-    ):
+    def __init__(self, resource_type: str, identifier: Any):
+        import traceback
+        import sys
+        print(f"DEBUG: NotFoundError initialized for {resource_type} with ID {identifier}", file=sys.stderr)
+        traceback.print_stack(file=sys.stderr)
         super().__init__(
             status_code=status.HTTP_404_NOT_FOUND,
             error_code="NOT_FOUND",

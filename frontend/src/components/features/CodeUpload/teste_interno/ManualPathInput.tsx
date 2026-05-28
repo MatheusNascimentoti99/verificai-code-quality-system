@@ -4,6 +4,9 @@ interface ManualPathInputProps {
   onPathAdded: (success: boolean) => void;
 }
 
+// @ts-ignore
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
+
 const ManualPathInput: React.FC<ManualPathInputProps> = ({ onPathAdded }) => {
   const [manualPath, setManualPath] = useState('');
   const [isAdding, setIsAdding] = useState(false);
@@ -31,10 +34,14 @@ const ManualPathInput: React.FC<ManualPathInputProps> = ({ onPathAdded }) => {
         last_modified: new Date().toISOString()
       };
 
-      const response = await fetch('/api/v1/file-paths/public/bulk', {
+      const { getAuthHeaders } = await import('@/utils/auth');
+      const authHeaders = getAuthHeaders();
+
+      const response = await fetch(`${API_BASE_URL}/file-paths/bulk`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          ...authHeaders
         },
         body: JSON.stringify({
           file_paths: [filePathData]

@@ -1,12 +1,11 @@
 """
-Database configuration and connection management for VerificAI Backend
+Database configuration for VerificAI Backend - Demo Mode (Supabase compatible)
 """
 
-from sqlalchemy import create_engine, MetaData, text
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import QueuePool
-import redis.asyncio as redis
+from urllib.parse import urlparse, urlunparse, quote
 from typing import Generator
 import logging
 
@@ -14,29 +13,68 @@ from app.core.config import settings
 from app.models.base import Base
 
 # Import all models to ensure they are registered with SQLAlchemy
-# This must happen BEFORE creating the engine
 from app.models.user import User
-from app.models.prompt import Prompt, PromptConfiguration
+from app.models.prompt import Prompt, PromptConfiguration, GeneralCriteria, GeneralAnalysisResult
 from app.models.analysis import Analysis, AnalysisResult
 from app.models.uploaded_file import UploadedFile
 from app.models.file_path import FilePath
+from app.models.code_entry import CodeEntry
 
 logger = logging.getLogger(__name__)
 
-# SQLAlchemy configuration
+
+def _fix_database_url(url: str) -> str:
+    """
+    Fix DATABASE_URL for Supabase/Render compatibility:
+    1. Replaces postgres:// with postgresql://
+    2. URL-encodes special characters in the password (e.g. @ becomes %40)
+    """
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
+
+    # Parse and re-encode the URL to safely handle special chars in password
+    try:
+        parsed = urlparse(url)
+        if parsed.password and "@" in parsed.password:
+            safe_password = quote(parsed.password, safe="")
+            netloc = f"{parsed.username}:{safe_password}@{parsed.hostname}"
+            if parsed.port:
+                netloc += f":{parsed.port}"
+            url = urlunparse(parsed._replace(netloc=netloc))
+    except Exception:
+        pass  # If parsing fails, use URL as-is
+
+    return url
+
+
+database_url = _fix_database_url(settings.DATABASE_URL)
+
+# Build connect_args for cloud Hosting (PostgreSQL usually requires SSL)
+_connect_args = {}
+_is_postgres = database_url.startswith("postgresql")
+if _is_postgres:
+    # For local Docker development (localhost, postgres), disable SSL
+    # For cloud hosting (Supabase, Render), require SSL
+    if "localhost" in database_url or "postgres" in database_url.split("@")[1].split(":")[0]:
+        _connect_args["sslmode"] = "disable"
+    else:
+        _connect_args["sslmode"] = "require"
+
+# SQLAlchemy engine - small pool for free-tier cloud hosting
 engine = create_engine(
-    settings.DATABASE_URL,
+    database_url,
     poolclass=QueuePool,
-    pool_size=settings.DATABASE_POOL_SIZE,
-    max_overflow=settings.DATABASE_MAX_OVERFLOW,
-    pool_timeout=settings.DATABASE_POOL_TIMEOUT,
-    pool_recycle=settings.DATABASE_POOL_RECYCLE,
+    pool_size=3,
+    max_overflow=2,
+    pool_timeout=30,
+    pool_recycle=1800,
     pool_pre_ping=True,
     echo=settings.DEBUG,
+    connect_args=_connect_args,
 )
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Naming convention for constraints
 convention = {
@@ -46,8 +84,6 @@ convention = {
     "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
     "pk": "pk_%(table_name)s"
 }
-
-# Apply naming convention to existing metadata
 Base.metadata.naming_convention = convention
 
 
@@ -64,31 +100,64 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
-async def get_redis() -> redis.Redis:
-    """Redis dependency for FastAPI routes"""
-    try:
-        redis_client = redis.from_url(
-            settings.REDIS_URL,
-            max_connections=settings.REDIS_MAX_CONNECTIONS,
-            encoding="utf-8",
-            decode_responses=True
-        )
-        # Test connection
-        await redis_client.ping()
-        return redis_client
-    except Exception as e:
-        logger.error(f"Redis connection error: {e}")
-        raise
-
-
 def create_tables():
     """Create database tables"""
     try:
         Base.metadata.create_all(bind=engine)
         logger.info("Database tables created successfully")
+        update_schema() # Attempt to update schema with new columns
     except Exception as e:
-        logger.error(f"Error creating database tables: {e}")
-        raise
+        logger.error(f"Error during database initialization: {e}")
+        # We don't re-raise to allow the app to start and respond to health checks
+        # though most endpoints will fail until DB is fixed.
+
+
+def update_schema():
+    """Attempt to add new columns to existing tables (self-healing)"""
+    try:
+        with engine.connect() as conn:
+            # Columns to add to 'prompts' table
+            prompt_columns = [
+                ("name", "VARCHAR(200) DEFAULT 'Novo Prompt'"),
+                ("description", "TEXT"),
+                ("is_public", "BOOLEAN DEFAULT FALSE"),
+                ("is_featured", "BOOLEAN DEFAULT FALSE"),
+                ("system_prompt", "TEXT"),
+                ("user_prompt_template", "TEXT"),
+                ("output_format_instructions", "TEXT"),
+                ("temperature", "FLOAT DEFAULT 0.7"),
+                ("max_tokens", "INTEGER DEFAULT 2000"),
+                ("model_name", "VARCHAR(100) DEFAULT 'gpt-4'"),
+                ("tags", "JSON"),
+                ("supported_languages", "JSON"),
+                ("supported_file_types", "JSON"),
+                ("usage_count", "INTEGER DEFAULT 0"),
+                ("success_rate", "FLOAT DEFAULT 0.0"),
+                ("category", "VARCHAR(50) DEFAULT 'code_analysis'"),
+                ("status", "VARCHAR(50) DEFAULT 'active'")
+            ]
+            
+            for col_name, col_type in prompt_columns:
+                try:
+                    conn.execute(text(f"ALTER TABLE prompts ADD COLUMN IF NOT EXISTS {col_name} {col_type}"))
+                    conn.commit()
+                except Exception as col_e:
+                    logger.warning(f"Could not add column {col_name}: {col_e}")
+
+            # Special case: rename 'type' to 'prompt_type' if 'prompt_type' doesn't exist
+            try:
+                # Check if prompt_type exists
+                res = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='prompts' AND column_name='prompt_type'"))
+                if not res.first():
+                    # If prompt_type doesn't exist, try to rename type
+                    conn.execute(text("ALTER TABLE prompts RENAME COLUMN type TO prompt_type"))
+                    conn.commit()
+                    logger.info("Renamed column 'type' to 'prompt_type' in prompts table")
+            except Exception as rename_e:
+                logger.warning(f"Could not rename type column: {rename_e}")
+
+    except Exception as e:
+        logger.error(f"Error updating schema: {e}")
 
 
 def drop_tables():
@@ -102,7 +171,7 @@ def drop_tables():
 
 
 class DatabaseManager:
-    """Database connection and transaction manager"""
+    """Database connection manager"""
 
     def __init__(self):
         self.engine = engine
@@ -111,13 +180,6 @@ class DatabaseManager:
     def get_session(self) -> Session:
         """Get a new database session"""
         return self.session_factory()
-
-    def execute_raw_sql(self, sql: str, params: dict = None) -> any:
-        """Execute raw SQL with parameters"""
-        with self.get_session() as session:
-            result = session.execute(sql, params or {})
-            session.commit()
-            return result
 
     def health_check(self) -> bool:
         """Check database connectivity"""
@@ -131,4 +193,4 @@ class DatabaseManager:
 
 
 # Global database manager instance
-db_manager = DatabaseManager()# Force reload 2
+db_manager = DatabaseManager()

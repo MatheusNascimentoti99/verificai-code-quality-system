@@ -7,6 +7,7 @@ import logging
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 import mimetypes
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -142,21 +143,29 @@ class FileProcessor:
                 logger.error(f"File not found: {file_path}")
                 return None
 
-            # Check file extension
+            # Skip common irrelevant directories even if individual file is requested
             path = Path(file_path)
+            if any(part in str(path).split(os.sep) for part in ['.git', 'node_modules', '__pycache__', 'venv', 'env', 'dist', 'build']):
+                logger.debug(f"Skipping file in excluded directory: {file_path}")
+                return None
+
+            # Check file extension
             if path.suffix.lower() not in self.allowed_extensions:
                 logger.warning(f"File extension not allowed: {path.suffix}")
                 return None
 
+            # Check file size before reading (ignore files > 1MB)
+            size = os.path.getsize(file_path)
+            if size > 1024 * 1024:
+                logger.warning(f"File too large: {file_path} ({size} bytes). Skipping.")
+                return None
+
             # Read file content
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
 
             # Detect language
             language = self.language_detector.detect_language(file_path)
-
-            # Get file size
-            size = os.path.getsize(file_path)
 
             # Count lines
             line_count = len(content.split('\n'))
@@ -186,16 +195,23 @@ class FileProcessor:
                 logger.error(f"Directory not found: {directory_path}")
                 return processed_files
 
-            # Walk through directory
-            for file_path in path.rglob('*'):
-                if file_path.is_file():
-                    try:
-                        processed_file = await self.process_file(str(file_path))
-                        if processed_file:
-                            processed_files.append(processed_file)
-                    except Exception as e:
-                        logger.error(f"Error processing file {file_path}: {str(e)}")
-                        continue
+            # Gather all files first
+            all_files = [str(f) for f in path.rglob('*') if f.is_file()]
+            
+            # Filter relevant files
+            relevant_files = self.filter_relevant_files(all_files)
+            
+            logger.info(f"Processing {len(relevant_files)} files in {directory_path}")
+
+            # Walk through relevant files
+            for file_path in relevant_files:
+                try:
+                    processed_file = await self.process_file(file_path)
+                    if processed_file:
+                        processed_files.append(processed_file)
+                except Exception as e:
+                    logger.error(f"Error processing file {file_path}: {str(e)}")
+                    continue
 
         except Exception as e:
             logger.error(f"Error processing directory {directory_path}: {str(e)}")

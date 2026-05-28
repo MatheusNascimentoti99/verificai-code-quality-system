@@ -5,13 +5,12 @@ Base model classes for VerificAI Backend
 from datetime import datetime
 from typing import Any
 from sqlalchemy import Column, Integer, DateTime
-from sqlalchemy.ext.declarative import as_declarative, declared_attr, declarative_base
+from sqlalchemy.ext.declarative import declared_attr, declarative_base
 from sqlalchemy.sql import func
 
 # Create declarative base
 Base = declarative_base()
 
-@as_declarative()
 class BaseModel:
     """Base SQLAlchemy model with common functionality"""
 

@@ -199,7 +199,9 @@ class AnalysisOrchestrator:
             await self.queue.update_progress(str(analysis.id), 10)
 
             # Step 2: Process files - 30%
-            processed_files = await self.file_processor.process_files(config.files)
+            raw_processed_files = await self.file_processor.process_files(config.files)
+            processed_files = [f.to_dict() for f in raw_processed_files]
+            logger.info(f"Successfully processed {len(processed_files)} files for analysis {analysis.id}")
             await self.queue.update_progress(str(analysis.id), 30)
 
             # Step 3: Optimize content - 50%
@@ -255,16 +257,14 @@ class AnalysisOrchestrator:
     def _process_llm_response(self, llm_response: Dict[str, Any], processed_files: List[Dict[str, Any]], config: AnalysisConfig) -> Dict[str, Any]:
         """Process LLM response and format results"""
         content = llm_response.get('content', '')
-
-        # Parse LLM response (this is a simplified version)
-        # In production, you'd want more sophisticated parsing
-
+        
+        # Initialize default result
         result = {
             'overall_assessment': content,
             'criteria_results': [],
             'code_examples': [],
             'recommendations': [],
-            'confidence': 0.8,  # Default confidence
+            'confidence': 0.8,
             'detailed_findings': content,
             'metrics': {
                 'total_files': len(processed_files),
@@ -273,14 +273,41 @@ class AnalysisOrchestrator:
             },
             'file_analysis': {}
         }
+        
+        # Try to extract JSON from response
+        try:
+            import re
+            json_match = re.search(r'```json\s*(.*?)\s*```', content, re.DOTALL)
+            if not json_match:
+                json_match = re.search(r'\{.*\}', content, re.DOTALL)
+                
+            if json_match:
+                json_str = json_match.group(1) if len(json_match.groups()) > 0 else json_match.group(0)
+                json_data = json.loads(json_str)
+                
+                # Merge parsed data into result
+                if isinstance(json_data, dict):
+                    result['overall_assessment'] = json_data.get('overall_assessment', content)
+                    result['detailed_findings'] = json_data.get('detailed_findings', content)
+                    result['criteria_results'] = json_data.get('criteria_results', [])
+                    result['code_examples'] = json_data.get('code_examples', [])
+                    result['recommendations'] = json_data.get('recommendations', [])
+                    result['confidence'] = json_data.get('confidence', 0.8)
+                    
+                    # Merge metrics if provided
+                    if 'metrics' in json_data:
+                        result['metrics'].update(json_data['metrics'])
+        except Exception as e:
+            logger.warning(f"Failed to parse LLM response as JSON: {str(e)}")
 
-        # Add file-specific analysis
+        # Add file-specific metadata if not already present
         for file_info in processed_files:
-            result['file_analysis'][file_info['path']] = {
-                'language': file_info.get('language', ''),
-                'line_count': file_info.get('line_count', 0),
-                'size_bytes': file_info.get('size', 0)
-            }
+            if file_info['path'] not in result['file_analysis']:
+                result['file_analysis'][file_info['path']] = {
+                    'language': file_info.get('language', ''),
+                    'line_count': file_info.get('line_count', 0),
+                    'size_bytes': file_info.get('size', 0)
+                }
 
         return result
 

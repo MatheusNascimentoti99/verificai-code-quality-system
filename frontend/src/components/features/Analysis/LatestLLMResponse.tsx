@@ -28,7 +28,7 @@ const LatestLLMResponse: React.FC = () => {
     setError(null);
 
     try {
-      const response = await analysisService.getLatestLLMResponse();
+      const response = await analysisService.getLatestResponse();
       setResponseData(response);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao carregar resposta da LLM');

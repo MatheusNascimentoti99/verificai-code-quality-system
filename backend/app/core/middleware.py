@@ -90,16 +90,17 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "X-Content-Type-Options": "nosniff",
             "X-Frame-Options": "DENY",
             "X-XSS-Protection": "1; mode=block",
-            "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
             "Referrer-Policy": "strict-origin-when-cross-origin",
             "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
+            # CSP: allow Vercel frontend + Vercel live feedback + Render backend + localhost for dev
             "Content-Security-Policy": (
                 "default-src 'self'; "
-                "script-src 'self' 'unsafe-inline'; "
-                "style-src 'self' 'unsafe-inline'; "
-                "img-src 'self' data:; "
-                "font-src 'self'; "
-                "connect-src 'self' http://localhost:3012 http://localhost:8000"
+                "script-src 'self' 'unsafe-inline' https://vercel.live https://cdn.jsdelivr.net; "
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "img-src 'self' data: https:; "
+                "font-src 'self' https:; "
+                "connect-src 'self' https://*.vercel.app https://*.vercel.live https://*.onrender.com "
+                "http://localhost:* http://127.0.0.1:*"
             )
         }
 

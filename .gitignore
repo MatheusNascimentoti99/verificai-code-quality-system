@@ -19,6 +19,7 @@ build/
 # IDE files
 .vscode/
 .idea/
+.serena/
 *.swp
 *.swo
 *~
@@ -49,6 +50,7 @@ temp/
 __pycache__/
 *.py[cod]
 *$py.class
+.venv/
 
 # Distribution / packaging
 .Python
@@ -112,3 +114,9 @@ target/
 
 # Docker
 .dockerignore
+# Temporary Tests
+Testes_temporarios/
+uploads/
+
+# Vercel
+.vercel/

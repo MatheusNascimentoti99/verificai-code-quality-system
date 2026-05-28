@@ -5,6 +5,7 @@ Updated for token display fix - FINAL VERSION
 
 print("MODULE LOADED: general_analysis.py - 2025-12-09 22:08 - LATEST-CODE-ENTRY TEST")
 
+import os
 from typing import List, Optional, Any
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, BackgroundTasks, Body, Request
@@ -15,7 +16,7 @@ from app.core.database import get_db
 from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.models.analysis import Analysis, AnalysisStatus
-from app.models.prompt import Prompt, PromptCategory
+from app.models.prompt import Prompt, PromptCategory, PromptType
 from app.models.prompt import GeneralCriteria, GeneralAnalysisResult as GeneralAnalysisResultModel
 from app.models.uploaded_file import UploadedFile, FileStatus
 from app.models.code_entry import CodeEntry
@@ -23,6 +24,7 @@ from app.schemas.analysis import AnalysisCreate, AnalysisResponse
 from app.api.v1.analysis import process_analysis
 from app.services.prompt_service import get_prompt_service
 from app.services.llm_service import llm_service
+from app.services.storage_provider import get_storage_provider
 
 router = APIRouter()
 
@@ -33,21 +35,26 @@ def get_uploaded_file_path(file_path: str, db: Session, user_id: int) -> str:
     """
     try:
         print(f"DEBUG: get_uploaded_file_path called with: file_path='{file_path}', user_id={user_id}")
+        storage = get_storage_provider()
 
-        # Helper function to find the most recent file that exists on disk
+        # Helper function to find the most recent uploaded file.
+        # Local files are validated on disk; blob URLs are accepted as-is.
         def find_most_recent_existing(files_query):
             # Order by created_at descending to get most recent first
             files = files_query.order_by(UploadedFile.created_at.desc()).all()
 
             for uploaded_file in files:
-                import os
-                # Use storage_path which contains the full path to the file
-                full_disk_path = uploaded_file.storage_path
-                if os.path.exists(full_disk_path):
-                    print(f"DEBUG: Found existing file: {uploaded_file.original_name} at {full_disk_path} from {uploaded_file.created_at}")
-                    return uploaded_file, full_disk_path
+                # Use storage_path for both local and blob storage.
+                file_locator = uploaded_file.storage_path
+                if str(file_locator).startswith(("http://", "https://", "minio://")):
+                    print(f"DEBUG: Found blob file: {uploaded_file.original_name} at {file_locator} from {uploaded_file.created_at}")
+                    return uploaded_file, file_locator
+
+                if storage.path_exists(file_locator):
+                    print(f"DEBUG: Found existing local file: {uploaded_file.original_name} at {file_locator} from {uploaded_file.created_at}")
+                    return uploaded_file, file_locator
                 else:
-                    print(f"DEBUG: File not found on disk: {full_disk_path}")
+                    print(f"DEBUG: File not found on disk: {file_locator}")
 
             return None, None
 
@@ -132,7 +139,7 @@ class AnalyzeSelectedRequest(BaseModel):
     """Request model for analyzing selected criteria"""
     criteria_ids: List[str]
     file_paths: List[str] = []  # Mantido para compatibilidade, mas não será usado
-    use_code_entry: bool = True  # Novo flag para indicar que deve usar code_entry
+    use_code_entry: bool = False  # Changed to False by default to prefer uploaded files
     code_entry_id: Optional[str] = None  # ID específico do code_entry (opcional)
     analysis_name: Optional[str] = "Análise de Critérios Gerais"
     temperature: float = 0.7
@@ -173,15 +180,12 @@ async def create_general_analysis(
     """Create a general analysis with custom criteria"""
     # Create or get general prompt
     general_prompt = db.query(Prompt).filter(
-        Prompt.name == "General Analysis",
-        Prompt.category == PromptCategory.GENERAL,
-        Prompt.author_id == current_user.id
+        Prompt.prompt_type == PromptType.GENERAL,
+        Prompt.user_id == current_user.id
     ).first()
 
-    if not general_prompt:
-        # Create general prompt with user criteria
-        criteria_text = "\n".join([f"- {criterion}" for criterion in request.criteria])
-        prompt_content = f"""
+    criteria_text = "\n".join([f"- {criterion}" for criterion in request.criteria])
+    prompt_content = f"""
 You are a code quality expert. Analyze the provided code based on the following criteria:
 
 {criteria_text}
@@ -200,39 +204,23 @@ Provide your analysis in a structured format that includes:
 
 Format your response in markdown.
 """
+
+    if not general_prompt:
+        # Create general prompt with user criteria
         general_prompt = Prompt(
-            name="General Analysis",
+            prompt_type=PromptType.GENERAL,
+            name="General Analysis Prompt",
             content=prompt_content,
-            category=PromptCategory.GENERAL,
-            author_id=current_user.id,
-            is_public=False
+            user_id=current_user.id,
+            version=1
         )
         db.add(general_prompt)
         db.commit()
         db.refresh(general_prompt)
     else:
         # Update prompt content with new criteria
-        criteria_text = "\n".join([f"- {criterion}" for criterion in request.criteria])
-        prompt_content = f"""
-You are a code quality expert. Analyze the provided code based on the following criteria:
-
-{criteria_text}
-
-For each criterion, provide:
-1. A clear assessment of whether the code meets the criterion
-2. Confidence level (0.0-1.0)
-3. Specific evidence from the code
-4. Recommendations for improvement if applicable
-
-Provide your analysis in a structured format that includes:
-- Overall assessment
-- Individual criterion evaluations
-- Code examples supporting your findings
-- Actionable recommendations
-
-Format your response in markdown.
-"""
         general_prompt.content = prompt_content
+        general_prompt.version += 1
         db.commit()
 
     # Create analysis
@@ -250,11 +238,15 @@ Format your response in markdown.
         }
     )
 
+    analysis_dict = analysis_data.model_dump()
+    file_paths = analysis_dict.pop("file_paths", [])
+    
     analysis = Analysis(
-        **analysis_data.dict(),
+        **analysis_dict,
         user_id=current_user.id,
         status=AnalysisStatus.PENDING
     )
+    analysis.set_file_paths(file_paths)
     db.add(analysis)
     db.commit()
     db.refresh(analysis)
@@ -746,6 +738,7 @@ async def analyze_selected_criteria(
         # Get prompt service
         print("DEBUG: Getting prompt service...")
         prompt_service = get_prompt_service(db)
+        storage = get_storage_provider()
 
         # Step 1: Read the general prompt from database (CORRECTED TO USE PROMPT ID 4)
         print("DEBUG: Getting general prompt from database...")
@@ -782,9 +775,12 @@ async def analyze_selected_criteria(
             source_info = ""
             total_files_processed = 0
 
-            if request.use_code_entry:
+            # Determine source: Prioritize file_paths if provided and not empty
+            is_using_files = len(request.file_paths) > 0
+            
+            if not is_using_files and request.use_code_entry:
                 # Buscar código da tabela code_entries
-                print(f"DEBUG: Getting code from code_entries table")
+                print(f"DEBUG: No files provided, but use_code_entry=True. Getting code from code_entries table")
 
                 code_entry = None
 
@@ -840,12 +836,11 @@ async def analyze_selected_criteria(
 
                         # Try to find the uploaded file and get its real storage path
                         actual_file_path = get_uploaded_file_path(source_file_path, db, current_user.id)
-                        print(f"DEBUG: Actual file path to read: {actual_file_path}")
+                        print(f"DEBUG: Actual file locator to read: {actual_file_path}")
 
-                        with open(actual_file_path, "r", encoding="utf-8") as f:
-                            file_content = f.read()
-                            file_size = len(file_content)
-                            print(f"DEBUG: File read successfully: {file_size} characters")
+                        file_content = await storage.read_text(actual_file_path)
+                        file_size = len(file_content)
+                        print(f"DEBUG: File read successfully: {file_size} characters")
 
                         # Add file header and content to the combined source code
                         file_extension = source_file_path.split('.')[-1] if '.' in source_file_path else 'txt'
@@ -859,7 +854,8 @@ async def analyze_selected_criteria(
                         total_files_processed += 1
 
                     except Exception as file_error:
-                        print(f"DEBUG: Error processing file {source_file_path}: {file_error}")
+                        error_msg = str(file_error)
+                        print(f"❌ DEBUG: Error processing file {source_file_path} (actual: {actual_file_path}): {error_msg}")
                         # Continue with other files even if one fails
                         continue
 
@@ -868,13 +864,22 @@ async def analyze_selected_criteria(
             print(f"DEBUG: Total source code size: {len(all_source_code)} characters")
 
             if total_files_processed == 0:
-                raise HTTPException(status_code=500, detail="Nenhum código pôde ser lido para análise")
+                is_cloud = "render" in os.environ.get("HOSTNAME", "").lower() or "vercel" in os.environ.get("HOSTNAME", "").lower()
+                detail_msg = "Nenhum código pôde ser lido para análise. O arquivo não existe no disco."
+                if is_cloud:
+                    detail_msg += " Devido ao ambiente cloud (Render/Vercel), arquivos locais são perdidos após o restart. Por favor, remova caminhos antigos ou use a 'Colagem de Código'."
+                else:
+                    file_previews = request.file_paths[:3] if request.file_paths else []
+                    detail_msg += f" Verifique se os diretórios {file_previews}... existem."
+                
+                # Changing from 500 to 400 so it's treated as a bad request (client side error) instead of server crash
+                raise HTTPException(status_code=400, detail=detail_msg)
 
         except HTTPException:
             raise
         except Exception as e:
-            print(f"DEBUG: Error reading source code: {e}")
-            raise HTTPException(status_code=500, detail=f"Erro ao ler código fonte: {str(e)}")
+            print(f"❌ DEBUG: Error reading source code: {e}")
+            raise HTTPException(status_code=500, detail=f"Erro crítico ao ler código fonte: {str(e)}")
 
         # Replace placeholder with source code (from code_entries or files)
         full_source_code = source_info + all_source_code
@@ -888,7 +893,6 @@ async def analyze_selected_criteria(
 
         # Save the final prompt to files for analysis
         try:
-            import os
             from datetime import datetime
 
             # Create prompts directory if it doesn't exist
@@ -934,12 +938,9 @@ async def analyze_selected_criteria(
         # Force override max_tokens to prevent truncation
         forced_max_tokens = 32000  # Force 32000 tokens to ensure complete response
 
-        print(f"=== SENDING TO LLM SERVICE ===")
-        print(f"DEBUG: About to send prompt of length {len(final_prompt)}")
-        print(f"DEBUG: Temperature: {request.temperature}, Original Max tokens: {request.max_tokens}")
-        print(f"DEBUG: FORCED Max tokens: {forced_max_tokens} (overriding frontend value)")
-
         # Increase timeout for LLM response to ensure complete analysis
+        import time
+        processing_start = time.time()
         try:
             llm_response = await llm_service.send_prompt(
                 final_prompt,
@@ -960,13 +961,25 @@ async def analyze_selected_criteria(
         print(f"DEBUG: LLM response keys: {llm_response.keys() if isinstance(llm_response, dict) else 'Not a dict'}")
         print(f"DEBUG: Full LLM response: {llm_response}")
 
-        llm_response_content = llm_response.get('response', '')
+        llm_response_content = llm_response.get('response', llm_response.get('text', ''))
         print("YYYYYYYYYY DEBUG: Checking response content YYYYYYYYYY")
-        print(f"DEBUG: LLM response['response'] type: {type(llm_response_content)}")
-        print(f"DEBUG: LLM response['response'] length: {len(llm_response_content)}")
+        print(f"DEBUG: LLM response content type: {type(llm_response_content)}")
+        print(f"DEBUG: LLM response content length: {len(llm_response_content)}")
         print(f"DEBUG: LLM response['response'] preview: {llm_response_content[:200]}")
         print(f"DEBUG: Is response empty? {not llm_response_content}")
         print("ZZZZZZZZZ END LLM SERVICE DEBUG ZZZZZZZZZ")
+
+        # Step 6.5: Save the raw response to a file for the "Last Response" tab
+        try:
+            from datetime import datetime
+            prompts_dir = Path(__file__).parent.parent.parent.parent / "prompts"
+            latest_response_path = prompts_dir / "latest_response.txt"
+            
+            with open(latest_response_path, "w", encoding="utf-8") as f:
+                f.write(llm_response_content)
+            print(f"DEBUG: Última resposta salva em: {latest_response_path}")
+        except Exception as save_error:
+            print(f"DEBUG: Erro ao salvar resposta em arquivo: {save_error}")
 
         # Check if response is empty
         if not llm_response_content:
@@ -975,32 +988,63 @@ async def analyze_selected_criteria(
         else:
             # Step 7: Extract content from LLM response
             print(f"=== RAW LLM RESPONSE FOR DEBUG ===")
-            print(f"Content type: {type(llm_response_content)}")
             print(f"Content length: {len(llm_response_content)}")
-            print(f"Content preview: {llm_response_content[:500]}")
             print(f"=== END RAW LLM RESPONSE ===")
 
-            # DEBUG: Test if response contains expected patterns
-            print(f"=== DEBUG RESPONSE PATTERNS ===")
-            print(f"Contains 'Critrio': {'Critrio' in llm_response_content}")
-            print(f"Contains '##': {'##' in llm_response_content}")
-            print(f"Contains 'Status:': {'Status:' in llm_response_content}")
-            print(f"Contains 'Confiana': {'Confiana' in llm_response_content}")
-            print(f"=== END DEBUG PATTERNS ===")
-
-            print(f"DEBUG: About to call extract_markdown_content with response of length {len(llm_response_content)}")
             try:
-                extracted_content = llm_service.extract_markdown_content(llm_response_content)
+                # Improved extraction logic using the #FIM_ANALISE_CRITERIO# tag
+                criteria_results = {}
+                
+                # Method 1: Try to split by the explicit tag we requested in the prompt
+                if "#FIM_ANALISE_CRITERIO#" in llm_response_content:
+                    print("DEBUG: Using #FIM_ANALISE_CRITERIO# for robust extraction")
+                    import re
+                    # Find criteria blocks
+                    # Example format: ## Critério 1: Name\nContent...#FIM_ANALISE_CRITERIO#
+                    blocks = re.split(r'#FIM_ANALISE_CRITERIO#', llm_response_content)
+                    
+                    for block in blocks:
+                        # Extract criteria header and content from block
+                        # Match "## Critério X: Name"
+                        match = re.search(r'##\s*Crit[ée]rio\s*(\d+(?:\.\d+)*)\s*[:\-]?\s*(.+?)\n(.*?)$', block, re.DOTALL)
+                        if match:
+                            crit_id = match.group(1)
+                            crit_name = match.group(2).strip()
+                            crit_content = match.group(3).strip()
+                            
+                            criteria_results[f"criteria_{crit_id}"] = {
+                                "name": crit_name,
+                                "content": crit_content
+                            }
+                
+                # Method 2: Fallback to regex if tags are missing or only some are present
+                if not criteria_results or len(criteria_results) < len(request.criteria_ids):
+                    print("DEBUG: Falling back to regex extraction (missing tags or incomplete)")
+                    import re
+                    # More flexible pattern that doesn't strictly require newline before ##
+                    criteria_pattern = r'##\s*Crit[ée]rio\s*(\d+(?:\.\d+)*)\s*[:\-]?\s*(.+?)\n(.*?)(?=\s*##\s*Crit[ée]rio\s*\d+|\s*##\s*(?:Resultado|Recomendações)\s*(?:Geral|)|#FIM_ANALISE_CRITERIO#|#FIM#|$)'
+                    matches = re.findall(criteria_pattern, llm_response_content, re.DOTALL)
+                    
+                    for match in matches:
+                        crit_id = match[0]
+                        if f"criteria_{crit_id}" not in criteria_results:
+                            criteria_results[f"criteria_{crit_id}"] = {
+                                "name": match[1].strip(),
+                                "content": match[2].strip()
+                            }
+
+                extracted_content = {
+                    "criteria_results": criteria_results,
+                    "raw_response": llm_response_content.strip()
+                }
             except Exception as extract_error:
-                print(f"ERROR: extract_markdown_content failed: {extract_error}")
-                import traceback
-                traceback.print_exc()
-                # Fallback content if extraction fails
+                print(f"ERROR: Extraction failed: {extract_error}")
                 extracted_content = {
                     "criteria_results": {},
                     "raw_response": llm_response_content
                 }
-            print(f"DEBUG: extract_markdown_content returned: {type(extracted_content)}")
+            
+            print(f"DEBUG: Extracted {len(extracted_content.get('criteria_results', {}))} criteria results")
             print(f"DEBUG: extracted_content keys: {extracted_content.keys() if isinstance(extracted_content, dict) else 'Not a dict'}")
             print(f"DEBUG: criteria_results in extracted_content: {extracted_content.get('criteria_results', {}) if isinstance(extracted_content, dict) else 'N/A'}")
 
@@ -1118,7 +1162,7 @@ async def analyze_selected_criteria(
                                 result_data["name"] = "Critrio analisado"
 
                             remapped_criteria_results[extracted_key] = result_data
-                            print(f"DEBUG: No match found for '{result_name}', using cleaned name: '{result_data.get('name')}'")
+                            print(f"DEBUG: No match found for '{result_name}' (type: {type(result_name)}), using cleaned name: '{result_data.get('name')}'")
 
             # Remove fallback logic to prevent duplicate results
             # Only use results that were actually returned by the LLM analysis
@@ -1129,19 +1173,25 @@ async def analyze_selected_criteria(
         # Step 8: Save analysis results to database
         import json
         from datetime import datetime
-        import time
-
-        print("DEBUG: Starting database save process...")
 
         # Calculate processing time
-        processing_start = time.time()
-        processing_time = f"{time.time() - processing_start:.2f}s"
+        processing_duration = time.time() - processing_start
+        processing_time_str = f"{processing_duration:.2f}s"
 
+        print(f"DEBUG: Starting database save process for analysis: {request.analysis_name[:50]}...")
+        print(f"DEBUG: Criteria results count: {len(extracted_content.get('criteria_results', {}))}")
+        print(f"DEBUG: Processing time: {processing_time_str}")
+
+        db_analysis_result = None
         try:
-            print("DEBUG: Creating GeneralAnalysisResult record...")
             # Create GeneralAnalysisResult record
+            # Truncate analysis_name to 200 chars to match database schema String(200)
+            safe_analysis_name = request.analysis_name[:197] + "..." if len(request.analysis_name) > 200 else request.analysis_name
+            
+            print(f"DEBUG: Creating GeneralAnalysisResult record with name: {safe_analysis_name}")
+            
             db_analysis_result = GeneralAnalysisResultModel(
-                analysis_name=request.analysis_name,
+                analysis_name=safe_analysis_name,
                 criteria_count=len(selected_criteria),
                 user_id=current_user.id,
                 criteria_results=extracted_content.get("criteria_results", {}),
@@ -1150,35 +1200,38 @@ async def analyze_selected_criteria(
                 usage=llm_response.get("usage", {}),
                 file_paths=json.dumps(request.file_paths),
                 modified_prompt=modified_prompt,
-                processing_time=processing_time
+                processing_time=processing_time_str
             )
 
-            print("DEBUG: Adding record to session...")
+            print("DEBUG: Adding record to session and flushing...")
             db.add(db_analysis_result)
+            db.flush() # Flush to catch potential constraint errors before commit
 
             print("DEBUG: Committing transaction...")
             db.commit()
 
-            print("DEBUG: Refreshing record...")
+            db.commit()
+            print("DEBUG: Commit successful.")
             db.refresh(db_analysis_result)
 
             print(f"DEBUG: Successfully saved analysis result to database with ID: {db_analysis_result.id}")
 
         except Exception as db_error:
-            print(f"DEBUG: Database save failed: {db_error}")
+            print(f"CRITICAL ERROR: Database save failed: {str(db_error)}")
             import traceback
             traceback.print_exc()
-            # Don't re-raise - continue with returning the result to the user
+            db.rollback() # Always rollback on error
             db_analysis_result = None
+            print("DEBUG: Rollback performed after database error.")
 
         # Step 9: Create analysis result structure
         result_data = {
             "success": True,
             "analysis_name": request.analysis_name,
             "criteria_count": len(selected_criteria),
-            "timestamp": llm_response["timestamp"],
-            "model_used": llm_response["model"],
-            "usage": llm_response["usage"],
+            "timestamp": llm_response.get("timestamp", datetime.utcnow().isoformat()),
+            "model_used": llm_response.get("model", "unknown-model"),
+            "usage": llm_response.get("usage", {}),
             "criteria_results": extracted_content.get("criteria_results", {}),
             "raw_response": extracted_content.get("raw_response", ""),
             "debug_raw_llm_response": llm_response_content,  # For debugging
@@ -1265,7 +1318,7 @@ async def debug_file_path(file_path: str, db: Session = Depends(get_db)) -> Any:
         return {
             "original_path": file_path,
             "resolved_path": actual_path,
-            "file_exists": file_exists,
+            "file_exists": file_exists or actual_path.startswith("http://") or actual_path.startswith("https://"),
             "can_read": os.access(actual_path, os.R_OK) if file_exists else False
         }
     except Exception as e:
@@ -1628,6 +1681,7 @@ async def delete_multiple_analysis_results(
 
 @router.delete("/results/all")
 async def delete_all_analysis_results(
+    request: Request = None,  # Adding request to handle any potential body
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):

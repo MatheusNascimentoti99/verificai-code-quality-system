@@ -51,20 +51,63 @@ class PromptStatus(str, enum.Enum):
 
 class Prompt(Base, BaseModel, AuditMixin):
     """
-    Stores the current version of a configurable prompt.
-    There will be exactly one row for each PromptType.
+    Stores the configuration for a prompt.
     """
     __tablename__ = "prompts"
 
+    name = Column(String(200), nullable=False, default="Novo Prompt")
+    description = Column(Text, nullable=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    type = Column(
+    
+    # Compatibility with PromptService using author_id
+    @property
+    def author_id(self):
+        return self.user_id
+    
+    @author_id.setter
+    def author_id(self, value):
+        self.user_id = value
+
+    prompt_type = Column(
         SQLEnum(PromptType, name="prompt_type_enum"),
         nullable=False,
-        unique=True,
         index=True,
     )
-    content = Column(Text, nullable=False)
+
+    @property
+    def type(self):
+        return self.prompt_type
+    
+    @type.setter
+    def type(self, value):
+        self.prompt_type = value
+    
+    # Prompt contents
+    system_prompt = Column(Text, nullable=True)
+    user_prompt_template = Column(Text, nullable=True)
+    output_format_instructions = Column(Text, nullable=True)
+    content = Column(Text, nullable=False) # Main content for backward compatibility
+    
+    # Settings
+    temperature = Column(Integer, default=0.7) # Float would be better but keeping consistency if needed
+    max_tokens = Column(Integer, default=2000)
+    model_name = Column(String(100), default="gpt-4")
+    
+    # Metadata
     version = Column(Integer, default=1, nullable=False)
+    is_public = Column(Boolean, default=False)
+    is_featured = Column(Boolean, default=False)
+    status = Column(SQLEnum(PromptStatus, name="prompt_status_enum"), default=PromptStatus.ACTIVE)
+    category = Column(SQLEnum(PromptCategory, name="prompt_category_enum"), default=PromptCategory.CODE_ANALYSIS)
+    
+    # Lists (JSON)
+    tags = Column(JSON, nullable=True)
+    supported_languages = Column(JSON, nullable=True)
+    supported_file_types = Column(JSON, nullable=True)
+    
+    # Stats
+    usage_count = Column(Integer, default=0)
+    success_rate = Column(Integer, default=0) # Should be float in reality
 
     # Relationships
     history = relationship(
@@ -77,7 +120,14 @@ class Prompt(Base, BaseModel, AuditMixin):
     analyses = relationship("Analysis", back_populates="prompt")
 
     def __repr__(self) -> str:
-        return f"<Prompt(type='{self.type}', version={self.version})>"
+        return f"<Prompt(name='{self.name}', type='{self.type}', version={self.version})>"
+
+    def increment_usage(self):
+        self.usage_count += 1
+
+    def update_success_rate(self, success: bool):
+        # Very simple implementation
+        pass
 
 
 class PromptHistory(Base, BaseModel):

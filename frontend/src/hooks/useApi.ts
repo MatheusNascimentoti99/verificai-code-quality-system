@@ -11,7 +11,8 @@ export const useApi = () => {
   const { token, refreshToken, logout } = useAuthStore();
 
   const api: AxiosInstance = axios.create({
-    baseURL: (import.meta as any).env.VITE_API_BASE_URL,
+    // @ts-ignore - Ignore TS error for env variable, Vite will replace this statically
+    baseURL: import.meta.env.VITE_API_BASE_URL,
     timeout: 300000, // 5 minutos para permitir análise completa da LLM
     headers: {
       'Content-Type': 'application/json',

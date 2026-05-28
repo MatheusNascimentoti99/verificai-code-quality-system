@@ -115,7 +115,7 @@ export const analysisService = {
         const response = await apiClient.post('/general-analysis/analyze-selected', request);
         return response.data;
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('🔍 DEBUG: Error analyzing selected criteria:', error);
       console.error('🔍 DEBUG: Error response:', error.response?.data);
       console.error('🔍 DEBUG: Error status:', error.response?.status);
@@ -164,7 +164,7 @@ export const analysisService = {
       const response = await apiClient.delete('/general-analysis/results/all');
       console.log('✅ DEBUG: Exclusão bem-sucedida:', response.data);
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
       console.warn('⚠️ DEBUG: Erro ao excluir todos os resultados (não crítico):', error.response?.status || error.message);
 
       // A exclusão não deve bloquear a análise - sempre retorna sucesso

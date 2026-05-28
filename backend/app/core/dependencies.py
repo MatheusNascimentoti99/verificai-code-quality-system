@@ -1,14 +1,13 @@
 """
-Dependency injection utilities for VerificAI Backend
+Dependency injection utilities for VerificAI Backend - Demo Mode (no Redis)
 """
 
 from typing import Generator, Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
-import redis.asyncio as redis
 
-from app.core.database import get_db, get_redis
+from app.core.database import get_db
 from app.core.security import verify_token
 from app.core.exceptions import InvalidTokenError, AuthenticationError
 from app.models.user import User
@@ -70,11 +69,6 @@ async def get_optional_user(
         return None
 
 
-async def get_redis_client() -> redis.Redis:
-    """Get Redis client"""
-    return await get_redis()
-
-
 class CommonQueryParams:
     """Common query parameters for pagination and filtering"""
 
@@ -122,24 +116,19 @@ def verify_api_key_permission(
     current_user: Optional[User] = Depends(get_optional_user)
 ) -> tuple[bool, Optional[User]]:
     """Verify API key or user authentication"""
-    # If user is authenticated via token, allow access
     if current_user:
         return True, current_user
-
-    # TODO: Implement API key validation
-    # For now, deny access if no valid authentication
     return False, None
 
 
 class RateLimitDependency:
-    """Rate limiting dependency"""
+    """Rate limiting dependency (in-memory, no Redis)"""
 
     def __init__(self, requests_per_minute: int = 60):
         self.requests_per_minute = requests_per_minute
 
     async def __call__(self, request):
-        # TODO: Implement Redis-based rate limiting
-        # For now, this is a placeholder
+        # Simple pass-through - rate limiting handled by middleware
         pass
 
 

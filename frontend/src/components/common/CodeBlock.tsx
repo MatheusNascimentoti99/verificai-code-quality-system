@@ -50,7 +50,7 @@ const CodeBlock: React.FC<CodeBlockProps> = ({
 
   const formatCodeWithLines = (code: string, startLine?: number, endLine?: number) => {
     if (!startLine || !endLine) {
-      return code;
+      return { formattedLines: code.split('\n'), lineNumbers: null };
     }
 
     const lines = code.split('\n');

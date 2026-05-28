@@ -142,3 +142,10 @@ class PromptValidationResult(BaseModel):
     errors: List[str]
     warnings: List[str]
     suggestions: List[str]
+
+
+class PromptConfigsUpdate(BaseModel):
+    """Schema for updating multiple prompt configurations at once"""
+    general: Optional[dict] = None
+    architectural: Optional[dict] = None
+    business: Optional[dict] = None

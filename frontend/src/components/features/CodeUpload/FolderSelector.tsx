@@ -1,6 +1,9 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 
+// @ts-ignore
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
+
 interface FilePath {
   id: string;
   fullPath: string;
@@ -156,7 +159,6 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
         console.log('Auth headers:', { hasAuth: !!authHeaders.Authorization });
 
         if (authHeaders.Authorization) {
-          // Transform frontend camelCase to backend snake_case
           const transformedFilePaths = filePaths.map(path => ({
             full_path: path.fullPath,
             file_name: path.fileName,
@@ -166,7 +168,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
             last_modified: path.lastModified?.toISOString()
           }));
 
-          const response = await fetch('/api/v1/file-paths/bulk', {
+          const response = await fetch(`${API_BASE_URL}/file-paths/bulk`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -245,8 +247,10 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
           ref={fileInputRef}
           id="folder-input"
           type="file"
-          webkitdirectory=""
-          directory=""
+          // @ts-ignore
+          webkitdirectory="true"
+          // @ts-ignore
+          directory="true"
           multiple
           className="hidden"
           onChange={handleFileInputChange}

@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Dict, Any
 import logging
+import os
 from app.core.database import get_db
 from app.models.prompt import PromptConfiguration
 from app.models.prompt import GeneralCriteria
@@ -38,15 +39,24 @@ async def simple_analyze(
 
         logger.debug(f"Found {len(selected_criteria)} criteria")
 
-        # Ler código fonte
-        source_code = ""
-        try:
-            with open("C:\\Users\\formi\\teste_gemini\\dev\\verificAI-code\\codigo_analise.ts", "r", encoding="utf-8") as f:
-                source_code = f.read()
-                logger.debug(f"Source code file read successfully: {len(source_code)} characters")
-        except Exception as e:
-            logger.error(f"Error reading source code file: {e}")
-            raise HTTPException(status_code=500, detail=f"Erro ao ler arquivo de código fonte: {str(e)}")
+        # Ler código fonte - Removido caminho fixo C:\\Users\\formi\\...
+        source_code = request.get("source_code", "")
+        if not source_code:
+            # Tentar ler de um local padrão ou relativo se necessário
+            try:
+                base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+                default_file = os.path.join(base_dir, "codigo_analise.ts")
+                if os.path.exists(default_file):
+                    with open(default_file, "r", encoding="utf-8") as f:
+                        source_code = f.read()
+                        logger.debug(f"Source code file read successfully from {default_file}")
+                else:
+                    logger.warning("No source code provided in request and default file not found.")
+            except Exception as e:
+                logger.error(f"Error reading default source code file: {e}")
+        
+        if not source_code:
+            raise HTTPException(status_code=400, detail="Código fonte não fornecido")
 
         # Build enhanced prompt with source code
         prompt_service = PromptService(db)

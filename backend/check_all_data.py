@@ -9,10 +9,11 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from app.core.database import SessionLocal
 from app.models.user import User
-from app.models.prompt import Prompt, PromptConfiguration, GeneralCriteria
+from app.models.prompt import Prompt, PromptConfiguration, GeneralCriteria, GeneralAnalysisResult
 from app.models.analysis import Analysis
 from app.models.uploaded_file import UploadedFile
 from app.models.file_path import FilePath
+from app.models.code_entry import CodeEntry
 
 def check_all_data():
     """Verifica todos os dados no banco de dados"""
@@ -71,7 +72,26 @@ def check_all_data():
         for upload in uploads:
             author = db.query(User).filter(User.id == upload.user_id).first()
             author_name = author.username if author else "Unknown"
-            print(f"  - ID {upload.id}: {upload.filename} (por {author_name}) - {upload.status}")
+            # FIX: UploadedFile model uses original_name, not filename
+            print(f"  - ID {upload.id}: {upload.original_name} (por {author_name}) - {upload.status}")
+        print()
+
+        # Verificar Code Entries
+        code_entries = db.query(CodeEntry).all()
+        print(f"CODE ENTRIES (PASTED CODE): {len(code_entries)}")
+        for entry in code_entries:
+            author = db.query(User).filter(User.id == entry.user_id).first()
+            author_name = author.username if author else "Unknown"
+            print(f"  - ID {entry.id}: {entry.title} (por {author_name}) - {entry.lines_count} linhas")
+        print()
+
+        # Verificar Resultados de Análise Geral
+        gen_results = db.query(GeneralAnalysisResult).all()
+        print(f"RESULTADOS DE ANÁLISE GERAL: {len(gen_results)}")
+        for res in gen_results:
+            author = db.query(User).filter(User.id == res.user_id).first()
+            author_name = author.username if author else "Unknown"
+            print(f"  - ID {res.id}: {res.analysis_name} (por {author_name}) - {res.created_at}")
         print()
 
         # Verificar file paths
@@ -91,6 +111,8 @@ def check_all_data():
         print(f"Analises: {len(analyses)}")
         print(f"Uploads: {len(uploads)}")
         print(f"File Paths: {len(file_paths)}")
+        print(f"Code Entries: {len(code_entries)}")
+        print(f"Resultados Gerais: {len(gen_results)}")
 
     except Exception as e:
         print(f"Erro: {e}")

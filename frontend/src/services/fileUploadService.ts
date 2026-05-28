@@ -1,4 +1,5 @@
 import axios from 'axios';
+import apiClient from './apiClient';
 import {
   UploadedFile,
   ValidationResult,
@@ -67,7 +68,7 @@ class FileUploadService {
       formData.append('originalName', file.name);
       formData.append('relativePath', (file as any).webkitRelativePath || file.name);
 
-      const response = await axios.post<UploadApiResponse>('/api/v1/upload', formData, {
+      const response = await apiClient.post<UploadApiResponse>('/upload', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
@@ -144,7 +145,7 @@ class FileUploadService {
    */
   async getFileStatus(fileId: string): Promise<UploadedFile | null> {
     try {
-      const response = await axios.get<UploadApiResponse>(`/api/v1/upload/${fileId}/status`);
+      const response = await apiClient.get<UploadApiResponse>(`/upload/${fileId}/status`);
       return response.data.data || null;
     } catch (error) {
       console.error('Failed to get file status:', error);
@@ -157,7 +158,7 @@ class FileUploadService {
    */
   async deleteFile(fileId: string): Promise<boolean> {
     try {
-      const response = await axios.delete(`/api/v1/upload/${fileId}`);
+      const response = await apiClient.delete(`/upload/${fileId}`);
       return response.data.success;
     } catch (error) {
       console.error('Failed to delete file:', error);
