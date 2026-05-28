@@ -32,6 +32,7 @@ from app.services.general_analysis_service import GeneralAnalysisService
 from app.services.prompt_service import get_prompt_service
 from app.services.llm_service import llm_service
 from app.services.storage_provider import get_storage_provider
+from app.schemas.llm import StructuredAnalysisOutput
 
 router = APIRouter()
 
@@ -595,7 +596,7 @@ async def analyze_selected_criteria(
                 f.write("FIM DO PROMPT\n")
                 f.write("="*80 + "\n")
 
-            print(f"DEBUG: ltimo prompt salvo em: {latest_prompt_path}")
+            print(f"DEBUG: ultimo prompt salvo em: {latest_prompt_path}")
 
         except Exception as save_error:
             print(f"DEBUG: Erro ao salvar prompt em arquivo: {save_error}")
@@ -619,7 +620,8 @@ async def analyze_selected_criteria(
             llm_response = await llm_service.send_prompt(
                 final_prompt,
                 temperature=request.temperature,
-                max_tokens=forced_max_tokens  # Force 32000 tokens to prevent truncation
+                max_tokens=forced_max_tokens,  # Force 32000 tokens to prevent truncation,
+                response_model=StructuredAnalysisOutput
             )
         except Exception as llm_error:
             print(f"ERROR: LLM service failed: {llm_error}")
@@ -636,11 +638,14 @@ async def analyze_selected_criteria(
         print(f"DEBUG: Full LLM response: {llm_response}")
 
         llm_response_content = llm_response.get('response', llm_response.get('text', ''))
+        structured_response = getattr(llm_response, "structured_content", {}) or {}
         print("YYYYYYYYYY DEBUG: Checking response content YYYYYYYYYY")
         print(f"DEBUG: LLM response content type: {type(llm_response_content)}")
         print(f"DEBUG: LLM response content length: {len(llm_response_content)}")
         print(f"DEBUG: LLM response['response'] preview: {llm_response_content[:200]}")
         print(f"DEBUG: Is response empty? {not llm_response_content}")
+        print(f"DEBUG: Structured response type: {type(structured_response)}")
+        print(f"DEBUG: Structured response keys: {list(structured_response.keys()) if isinstance(structured_response, dict) else 'Not a dict'}")
         print("ZZZZZZZZZ END LLM SERVICE DEBUG ZZZZZZZZZ")
 
         # Step 6.5: Save the raw response to a file for the "Last Response" tab
@@ -655,8 +660,37 @@ async def analyze_selected_criteria(
         except Exception as save_error:
             print(f"DEBUG: Erro ao salvar resposta em arquivo: {save_error}")
 
-        # Check if response is empty
-        if not llm_response_content:
+        def _normalize_structured_criteria_results(structured_data: dict) -> dict:
+            criteria_results = {}
+            for item in structured_data.get("criteria_results", []):
+                if not isinstance(item, dict):
+                    continue
+
+                criterion_id = item.get("id")
+                if criterion_id is None:
+                    continue
+
+                criterion = next((c for c in selected_criteria if c.id == criterion_id), None)
+                criteria_results[f"criteria_{criterion_id}"] = {
+                    "name": criterion.text if criterion else f"Critério {criterion_id}",
+                    "content": (
+                        f"**Status:** {item.get('status', 'Análise requerida')}\n"
+                        f"**Confiança:** {item.get('confidence', 0.0):.2f}\n\n"
+                        f"### Análise:\n{item.get('assessment', '')}\n\n"
+                        f"### Evidências:\n" + "\n".join(f"- {evidence}" for evidence in item.get("evidence", [])) +
+                        ("\n\n### Recomendações:\n" + "\n".join(f"- {recommendation}" for recommendation in item.get("recommendations", [])) if item.get("recommendations") else "")
+                    ).strip()
+                }
+            return criteria_results
+
+        if structured_response.get("criteria_results"):
+            print("DEBUG: Using structured response from LLM")
+            extracted_content = {
+                "criteria_results": _normalize_structured_criteria_results(structured_response),
+                "raw_response": llm_response_content.strip(),
+                "structured_response": structured_response,
+            }
+        elif not llm_response_content:
             print("ERROR: LLM response is empty!")
             extracted_content = {"criteria_results": {}, "raw_response": ""}
         else:
@@ -709,13 +743,15 @@ async def analyze_selected_criteria(
 
                 extracted_content = {
                     "criteria_results": criteria_results,
-                    "raw_response": llm_response_content.strip()
+                    "raw_response": llm_response_content.strip(),
+                    "structured_response": structured_response,
                 }
             except Exception as extract_error:
                 print(f"ERROR: Extraction failed: {extract_error}")
                 extracted_content = {
                     "criteria_results": {},
-                    "raw_response": llm_response_content
+                    "raw_response": llm_response_content,
+                    "structured_response": structured_response,
                 }
             
             print(f"DEBUG: Extracted {len(extracted_content.get('criteria_results', {}))} criteria results")
@@ -732,117 +768,6 @@ async def analyze_selected_criteria(
                     print(f"DEBUG: criteria_results keys: {list(criteria_results.keys())}")
                     for key, value in criteria_results.items():
                         print(f"DEBUG: {key}: {type(value)} - {str(value)[:100] if value else 'None'}")
-
-            # Step 7.5: Map extracted criteria results to actual criteria IDs
-            print(f"DEBUG: Starting criteria ID mapping...")
-            print(f"DEBUG: Selected criteria: {selected_criteria}")
-            print(f"DEBUG: Request criteria IDs: {request.criteria_ids}")
-
-            # Create mapping from criteria name to criteria ID
-            criteria_name_to_id = {}
-            for criteria in selected_criteria:
-                # criteria is a GeneralCriteria object with id and text attributes
-                criteria_name_to_id[criteria.text.strip().lower()] = criteria.id
-                print(f"DEBUG: Mapping '{criteria.text.strip().lower()}' to ID {criteria.id}")
-
-            # Also create a mapping from the position in the request to the criteria ID
-            position_to_id = {}
-            for i, criteria_id_str in enumerate(request.criteria_ids):
-                actual_id = int(criteria_id_str.replace("criteria_", ""))
-                position_to_id[i] = actual_id
-                print(f"DEBUG: Position {i} maps to criteria_{actual_id}")
-
-            # Remap criteria_results to use actual criteria IDs instead of position-based keys
-            remapped_criteria_results = {}
-
-            # First pass: Try to map by name matching and position
-            for extracted_key, result_data in extracted_content.get("criteria_results", {}).items():
-                print(f"DEBUG: Processing extracted key: {extracted_key}, result: {result_data}")
-
-                # Extract the position number from the key (criteria_1, criteria_2, etc.)
-                key_position = None
-                if extracted_key.startswith("criteria_"):
-                    try:
-                        key_position = int(extracted_key.replace("criteria_", "")) - 1  # Convert to 0-based index
-                    except ValueError:
-                        pass
-
-                # Method 1: Try to map by position first (most reliable)
-                if key_position is not None and key_position in position_to_id:
-                    criteria_id = position_to_id[key_position]
-                    # IMPORTANT: Always use the original criteria text from database
-                    original_criteria = next((c for c in selected_criteria if c.id == criteria_id), None)
-                    if original_criteria:
-                        result_data["name"] = original_criteria.text  # Override LLM name with original
-                        remapped_criteria_results[f"criteria_{criteria_id}"] = result_data
-                        print(f"DEBUG: Mapped by position {key_position} to criteria_{criteria_id}, using original name: '{original_criteria.text}'")
-                        continue
-
-                # Method 2: Try to find matching criteria by name (fallback)
-                result_name = result_data.get("name", "").strip().lower()
-                print(f"DEBUG: Looking for criteria with name: '{result_name}'")
-
-                # Try exact match first
-                if result_name in criteria_name_to_id:
-                    criteria_id = criteria_name_to_id[result_name]
-                    # IMPORTANT: Always use the original criteria text from database
-                    original_criteria = next((c for c in selected_criteria if c.id == criteria_id), None)
-                    if original_criteria:
-                        result_data["name"] = original_criteria.text  # Override LLM name with original
-                        remapped_criteria_results[f"criteria_{criteria_id}"] = result_data
-                        print(f"DEBUG: Found exact match - mapped to criteria_{criteria_id}, using original name: '{original_criteria.text}'")
-                else:
-                    # Try fuzzy matching
-                    found_match = False
-                    for criteria_text, candidate_id in criteria_name_to_id.items():
-                        # Check if the result name contains the criteria text or vice versa
-                        if (result_name in criteria_text or
-                            criteria_text in result_name or
-                            result_name.split(':')[0].strip() in criteria_text or
-                            criteria_text.split(':')[0].strip() in result_name):
-                            # IMPORTANT: Always use the original criteria text from database
-                            original_criteria = next((c for c in selected_criteria if c.id == candidate_id), None)
-                            if original_criteria:
-                                result_data["name"] = original_criteria.text  # Override LLM name with original
-                                remapped_criteria_results[f"criteria_{candidate_id}"] = result_data
-                                print(f"DEBUG: Found fuzzy match - mapped '{result_name}' to criteria_{candidate_id}, using original name: '{original_criteria.text}'")
-                                found_match = True
-                                break
-
-                    if not found_match:
-                        # CRITICAL FIX: Never keep problematic names like "criteria_2"
-                        # Always override with a clean name or use position-based mapping as final fallback
-                        if key_position is not None and key_position < len(selected_criteria):
-                            # Final fallback: use the criteria at this position
-                            fallback_criteria = selected_criteria[key_position]
-                            result_data["name"] = fallback_criteria.text
-                            remapped_criteria_results[f"criteria_{fallback_criteria.id}"] = result_data
-                            print(f"DEBUG: FINAL FALLBACK - Using position {key_position} to get criteria '{fallback_criteria.text}'")
-                        else:
-                            # Clean up problematic names
-                            if result_name:
-                                # Remove common problematic patterns
-                                cleaned_name = result_name
-                                for prefix in ['criteria_', 'critrio ', 'criterion ', '##']:
-                                    if cleaned_name.lower().startswith(prefix):
-                                        cleaned_name = cleaned_name[len(prefix):].strip()
-
-                                # If still looks like a technical ID, use generic name
-                                if cleaned_name.startswith('criteria_') or len(cleaned_name) < 3:
-                                    result_data["name"] = "Critrio analisado"
-                                else:
-                                    result_data["name"] = cleaned_name.capitalize()
-                            else:
-                                result_data["name"] = "Critrio analisado"
-
-                            remapped_criteria_results[extracted_key] = result_data
-                            print(f"DEBUG: No match found for '{result_name}' (type: {type(result_name)}), using cleaned name: '{result_data.get('name')}'")
-
-            # Remove fallback logic to prevent duplicate results
-            # Only use results that were actually returned by the LLM analysis
-
-            print(f"DEBUG: Final remapped criteria_results: {remapped_criteria_results}")
-            extracted_content["criteria_results"] = remapped_criteria_results
 
         # Step 8: Save analysis results to database
         import json
@@ -908,7 +833,6 @@ async def analyze_selected_criteria(
             "usage": llm_response.get("usage", {}),
             "criteria_results": extracted_content.get("criteria_results", {}),
             "raw_response": extracted_content.get("raw_response", ""),
-            "debug_raw_llm_response": llm_response_content,  # For debugging
             "modified_prompt": modified_prompt,
             "file_paths": request.file_paths,
             "saved_to_db": True,
