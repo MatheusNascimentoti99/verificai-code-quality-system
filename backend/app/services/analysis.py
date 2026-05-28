@@ -22,8 +22,10 @@ class AnalysisService:
     def __init__(self, db: Session):
         self.db = db
 
-    def create_analysis(self, user_id: int, analysis_data: Dict[str, Any]) -> Analysis:
+    def create_analysis(self, user_id: int, analysis_data: Dict[str, Any], is_admin: bool = False) -> Analysis:
         """Create a new analysis"""
+        analysis_data = dict(analysis_data)
+
         # Validate prompt exists and user has access
         prompt_id = analysis_data.get('prompt_id')
         prompt = self.db.query(Prompt).filter(Prompt.id == prompt_id).first()
@@ -31,11 +33,13 @@ class AnalysisService:
             raise NotFoundError("Prompt", str(prompt_id))
 
         # Check prompt permissions
-        if not prompt.is_public and prompt.author_id != user_id:
+        if not prompt.is_public and prompt.author_id != user_id and not is_admin:
             raise BusinessRuleError("Access denied to prompt")
 
         # Validate analysis data
         self._validate_analysis_data(analysis_data)
+
+        file_paths = analysis_data.pop('file_paths', []) or []
 
         # Create analysis
         analysis = Analysis(
@@ -43,6 +47,7 @@ class AnalysisService:
             user_id=user_id,
             status=AnalysisStatus.PENDING
         )
+        analysis.set_file_paths(file_paths)
 
         self.db.add(analysis)
         self.db.commit()
@@ -106,26 +111,26 @@ class AnalysisService:
 
         return query.offset(skip).limit(limit).all()
 
-    def get_analysis_result(self, analysis_id: int, user_id: int) -> Optional[AnalysisResult]:
+    def get_analysis_result(self, analysis_id: int, user_id: int, is_admin: bool = False) -> Optional[AnalysisResult]:
         """Get analysis result"""
         analysis = self.get_analysis_by_id(analysis_id)
         if not analysis:
             raise NotFoundError("Analysis", str(analysis_id))
 
         # Check permissions
-        if analysis.user_id != user_id:
+        if not is_admin and analysis.user_id != user_id:
             raise BusinessRuleError("Access denied")
 
         return analysis.result
 
-    def update_analysis(self, analysis_id: int, user_id: int, analysis_data: Dict[str, Any]) -> Analysis:
+    def update_analysis(self, analysis_id: int, user_id: int, analysis_data: Dict[str, Any], is_admin: bool = False) -> Analysis:
         """Update analysis"""
         analysis = self.get_analysis_by_id(analysis_id)
         if not analysis:
             raise NotFoundError("Analysis", str(analysis_id))
 
         # Check permissions
-        if analysis.user_id != user_id:
+        if not is_admin and analysis.user_id != user_id:
             raise BusinessRuleError("Access denied")
 
         # Can only update pending analyses
@@ -145,14 +150,14 @@ class AnalysisService:
 
         return analysis
 
-    def delete_analysis(self, analysis_id: int, user_id: int) -> bool:
+    def delete_analysis(self, analysis_id: int, user_id: int, is_admin: bool = False) -> bool:
         """Delete analysis"""
         analysis = self.get_analysis_by_id(analysis_id)
         if not analysis:
             raise NotFoundError("Analysis", str(analysis_id))
 
         # Check permissions
-        if analysis.user_id != user_id:
+        if not is_admin and analysis.user_id != user_id:
             raise BusinessRuleError("Access denied")
 
         # Can only delete pending or completed analyses
@@ -214,14 +219,14 @@ class AnalysisService:
 
         return analysis
 
-    def cancel_analysis(self, analysis_id: int, user_id: int) -> Analysis:
+    def cancel_analysis(self, analysis_id: int, user_id: int, is_admin: bool = False) -> Analysis:
         """Cancel analysis"""
         analysis = self.get_analysis_by_id(analysis_id)
         if not analysis:
             raise NotFoundError("Analysis", str(analysis_id))
 
         # Check permissions
-        if analysis.user_id != user_id:
+        if not is_admin and analysis.user_id != user_id:
             raise BusinessRuleError("Access denied")
 
         # Can only cancel processing analyses
@@ -234,14 +239,14 @@ class AnalysisService:
 
         return analysis
 
-    def restart_analysis(self, analysis_id: int, user_id: int) -> Analysis:
+    def restart_analysis(self, analysis_id: int, user_id: int, is_admin: bool = False) -> Analysis:
         """Restart analysis"""
         analysis = self.get_analysis_by_id(analysis_id)
         if not analysis:
             raise NotFoundError("Analysis", str(analysis_id))
 
         # Check permissions
-        if analysis.user_id != user_id:
+        if not is_admin and analysis.user_id != user_id:
             raise BusinessRuleError("Access denied")
 
         # Can only restart failed or cancelled analyses
@@ -271,51 +276,34 @@ class AnalysisService:
         if user_id:
             query = query.filter(Analysis.user_id == user_id)
 
-        total_analyses = query.count()
-        completed_analyses = query.filter(Analysis.status == AnalysisStatus.COMPLETED).count()
-        failed_analyses = query.filter(Analysis.status == AnalysisStatus.FAILED).count()
-        processing_analyses = query.filter(Analysis.status == AnalysisStatus.PROCESSING).count()
+        analyses = query.all()
+        total_analyses = len(analyses)
+        completed_analyses = sum(1 for analysis in analyses if analysis.status == AnalysisStatus.COMPLETED)
+        failed_analyses = sum(1 for analysis in analyses if analysis.status == AnalysisStatus.FAILED)
 
-        # Calculate average score for completed analyses
-        completed_query = query.filter(Analysis.status == AnalysisStatus.COMPLETED)
-        avg_scores = completed_query.with_entities(
-            Analysis.overall_score,
-            Analysis.security_score,
-            Analysis.performance_score,
-            Analysis.maintainability_score
-        ).all()
+        completed_scores = [analysis.overall_score or 0 for analysis in analyses if analysis.status == AnalysisStatus.COMPLETED]
+        average_score = sum(completed_scores) / len(completed_scores) if completed_scores else 0
 
-        avg_overall = sum([score[0] or 0 for score in avg_scores]) / len(avg_scores) if avg_scores else 0
-        avg_security = sum([score[1] or 0 for score in avg_scores]) / len(avg_scores) if avg_scores else 0
-        avg_performance = sum([score[2] or 0 for score in avg_scores]) / len(avg_scores) if avg_scores else 0
-        avg_maintainability = sum([score[3] or 0 for score in avg_scores]) / len(avg_scores) if avg_scores else 0
+        analyses_by_language: Dict[str, int] = {}
+        analyses_by_status: Dict[str, int] = {status.value: 0 for status in AnalysisStatus}
+        total_tokens_used = 0
 
-        # Analyses by status
-        analyses_by_status = {}
-        for status in AnalysisStatus:
-            count = query.filter(Analysis.status == status).count()
-            analyses_by_status[status.value] = count
-
-        # Total processing time and cost (placeholders)
-        total_processing_time = 0  # TODO: Calculate actual processing time
-        total_cost = 0.0  # TODO: Calculate actual cost
-        total_tokens = 0  # TODO: Sum actual tokens used
+        for analysis in analyses:
+            if analysis.language:
+                analyses_by_language[analysis.language] = analyses_by_language.get(analysis.language, 0) + 1
+            analyses_by_status[analysis.status.value] = analyses_by_status.get(analysis.status.value, 0) + 1
+            total_tokens_used += analysis.tokens_used or 0
 
         return {
             "total_analyses": total_analyses,
             "completed_analyses": completed_analyses,
             "failed_analyses": failed_analyses,
-            "processing_analyses": processing_analyses,
-            "average_scores": {
-                "overall": avg_overall,
-                "security": avg_security,
-                "performance": avg_performance,
-                "maintainability": avg_maintainability
-            },
+            "average_score": average_score,
+            "average_processing_time": 0.0,
+            "total_tokens_used": total_tokens_used,
+            "total_cost": 0.0,
+            "analyses_by_language": analyses_by_language,
             "analyses_by_status": analyses_by_status,
-            "total_processing_time": total_processing_time,
-            "total_cost": total_cost,
-            "total_tokens": total_tokens
         }
 
     def get_user_analyses(self, user_id: int, skip: int = 0, limit: int = 100) -> List[Analysis]:
