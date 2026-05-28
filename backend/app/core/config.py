@@ -90,7 +90,7 @@ class Settings(BaseSettings):
 
     # File Upload Configuration
     MAX_FILE_SIZE: int = Field(default=10485760, env="MAX_FILE_SIZE")  # 10MB (reduzido para demo)
-    STORAGE_PROVIDER: str = Field(default="auto", env="STORAGE_PROVIDER")  # auto | local | vercel_blob | minio
+    STORAGE_PROVIDER: str = Field(default="local", env="STORAGE_PROVIDER")  # local | vercel_blob | minio
     UPLOAD_DIR: str = Field(default="uploads", env="UPLOAD_DIR")
     BLOB_ACCESS: str = Field(default="private", env="BLOB_ACCESS")  # private | public
     BLOB_READ_WRITE_TOKEN: Optional[str] = Field(default=None, env="BLOB_READ_WRITE_TOKEN")
