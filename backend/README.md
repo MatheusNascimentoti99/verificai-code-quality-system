@@ -146,9 +146,9 @@ pytest -v
 
 ### Interactive Documentation
 
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
-- **OpenAPI Schema**: http://localhost:8000/openapi.json
+- **Swagger UI**: http://localhost:8000/api/v1/docs
+- **ReDoc**: http://localhost:8000/api/v1/redoc
+- **OpenAPI Schema**: http://localhost:8000/api/v1/openapi.json
 
 ### Authentication
 

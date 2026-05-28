@@ -26,6 +26,18 @@ class FileSystemStorageProvider(StorageProvider):
     def _path_exists_local(self, locator: str) -> bool:
         return Path(locator).exists()
 
+    def _upload_local_bytes(
+        self,
+        *,
+        pathname: str,
+        content: bytes,
+    ) -> str:
+        target_path = self.upload_dir / pathname
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(target_path, "wb") as handle:
+            handle.write(content)
+        return str(target_path)
+
     async def upload_bytes(
         self,
         *,
@@ -38,7 +50,7 @@ class FileSystemStorageProvider(StorageProvider):
     ) -> StoredFileInfo:
         pathname = self._build_pathname(user_id, file_id, original_name, relative_path)
         self._ensure_upload_dir()
-        locator = self._upload_local_bytes(file_id=file_id, original_name=original_name, content=content)
+        locator = self._upload_local_bytes(pathname=pathname, content=content)
         return StoredFileInfo(locator=locator, pathname=pathname)
 
     def path_exists(self, locator: str) -> bool:

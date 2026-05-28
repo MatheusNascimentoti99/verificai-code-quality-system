@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user, CommonQueryParams, get_pagination_params
+from app.services.analysis import AnalysisService
 from app.models.user import User
 from app.models.analysis import Analysis, AnalysisStatus
 from app.schemas.analysis import (
@@ -20,6 +21,10 @@ from app.schemas.common import PaginatedResponse
 router = APIRouter()
 
 
+def get_analysis_service(db: Session) -> AnalysisService:
+    return AnalysisService(db)
+
+
 @router.post("/", response_model=AnalysisResponse)
 def create_analysis(
     analysis_data: AnalysisCreate,
@@ -28,34 +33,8 @@ def create_analysis(
     db: Session = Depends(get_db)
 ) -> Any:
     """Create a new analysis"""
-    # Validate prompt exists and user has access
-    from app.models.prompt import Prompt
-    prompt = db.query(Prompt).filter(Prompt.id == analysis_data.prompt_id).first()
-    if not prompt:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Prompt not found"
-        )
-
-    if not prompt.is_public and prompt.author_id != current_user.id and not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied to prompt"
-        )
-
-    analysis_dict = analysis_data.model_dump()
-    file_paths = analysis_dict.pop("file_paths", [])
-
-    # Create analysis
-    analysis = Analysis(
-        **analysis_dict,
-        user_id=current_user.id,
-        status=AnalysisStatus.PENDING
-    )
-    analysis.set_file_paths(file_paths)
-    db.add(analysis)
-    db.commit()
-    db.refresh(analysis)
+    service = get_analysis_service(db)
+    analysis = service.create_analysis(current_user.id, analysis_data.model_dump(), current_user.is_admin)
 
     # Start background processing
     background_tasks.add_task(process_analysis, analysis.id, db)
@@ -137,7 +116,8 @@ def get_analysis(
     db: Session = Depends(get_db)
 ) -> Any:
     """Get analysis by ID"""
-    analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()
+    service = get_analysis_service(db)
+    analysis = service.get_analysis_by_id(analysis_id)
     if not analysis:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -161,21 +141,9 @@ def get_analysis_result(
     db: Session = Depends(get_db)
 ) -> Any:
     """Get analysis result"""
-    analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()
+    service = get_analysis_service(db)
+    analysis = service.get_analysis_result(analysis_id, current_user.id, current_user.is_admin)
     if not analysis:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Analysis not found"
-        )
-
-    # Check permissions
-    if analysis.user_id != current_user.id and not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied"
-        )
-
-    if not analysis.result:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Analysis result not available"
@@ -192,33 +160,8 @@ def update_analysis(
     db: Session = Depends(get_db)
 ) -> Any:
     """Update analysis"""
-    analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()
-    if not analysis:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Analysis not found"
-        )
-
-    # Check permissions
-    if analysis.user_id != current_user.id and not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied"
-        )
-
-    # Can only update pending analyses
-    if analysis.status != AnalysisStatus.PENDING:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Can only update pending analyses"
-        )
-
-    # Update fields
-    for field, value in analysis_data.model_dump(exclude_unset=True).items():
-        setattr(analysis, field, value)
-
-    db.commit()
-    db.refresh(analysis)
+    service = get_analysis_service(db)
+    analysis = service.update_analysis(analysis_id, current_user.id, analysis_data.model_dump(exclude_unset=True), current_user.is_admin)
 
     return analysis
 
@@ -230,35 +173,14 @@ def delete_analysis(
     db: Session = Depends(get_db)
 ) -> Any:
     """Delete analysis"""
-    analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()
-    if not analysis:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Analysis not found"
-        )
-
-    # Check permissions
-    if analysis.user_id != current_user.id and not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied"
-        )
-
-    # Can only delete pending or completed analyses
-    if analysis.status == AnalysisStatus.PROCESSING:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot delete analysis while processing"
-        )
-
-    db.delete(analysis)
-    db.commit()
+    service = get_analysis_service(db)
+    service.delete_analysis(analysis_id, current_user.id, current_user.is_admin)
 
     return {"message": "Analysis deleted successfully"}
 
 
 @router.post("/{analysis_id}/cancel", response_model=dict)
-def cancel_analysis(
+async def cancel_analysis(
     analysis_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -285,10 +207,17 @@ def cancel_analysis(
             detail="Can only cancel processing analyses"
         )
 
-    analysis.cancel_processing()
-    db.commit()
+    # Cancel using orchestrator
+    from app.services.analysis_orchestrator import AnalysisOrchestrator
+    orchestrator = AnalysisOrchestrator()
+    cancelled = await orchestrator.cancel_analysis(str(analysis_id))
 
-    return {"message": "Analysis cancelled successfully"}
+    if cancelled:
+        service = get_analysis_service(db)
+        service.cancel_analysis(analysis_id, current_user.id, current_user.is_admin)
+        return {"message": "Analysis cancelled successfully"}
+
+    return {"message": "Analysis was not found in active jobs"}
 
 
 @router.post("/{analysis_id}/restart", response_model=AnalysisResponse)
@@ -299,35 +228,8 @@ def restart_analysis(
     db: Session = Depends(get_db)
 ) -> Any:
     """Restart analysis"""
-    analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()
-    if not analysis:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Analysis not found"
-        )
-
-    # Check permissions
-    if analysis.user_id != current_user.id and not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied"
-        )
-
-    # Can only restart failed or cancelled analyses
-    if analysis.status not in [AnalysisStatus.FAILED, AnalysisStatus.CANCELLED]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Can only restart failed or cancelled analyses"
-        )
-
-    # Reset analysis status
-    analysis.status = AnalysisStatus.PENDING
-    analysis.progress_percentage = 0
-    analysis.error_message = None
-    analysis.started_at = None
-    analysis.completed_at = None
-
-    db.commit()
+    service = get_analysis_service(db)
+    analysis = service.restart_analysis(analysis_id, current_user.id, current_user.is_admin)
 
     # Start background processing
     background_tasks.add_task(process_analysis, analysis.id, db)
@@ -357,32 +259,10 @@ def get_analysis_stats(
     db: Session = Depends(get_db)
 ) -> Any:
     """Get analysis statistics"""
-    # Users can only see their own stats unless admin
-    if current_user.is_admin:
-        query = db.query(Analysis)
-    else:
-        query = db.query(Analysis).filter(Analysis.user_id == current_user.id)
+    service = get_analysis_service(db)
+    stats = service.get_analysis_stats(None if current_user.is_admin else current_user.id)
 
-    total_analyses = query.count()
-    completed_analyses = query.filter(Analysis.status == AnalysisStatus.COMPLETED).count()
-    failed_analyses = query.filter(Analysis.status == AnalysisStatus.FAILED).count()
-
-    # Calculate average score for completed analyses
-    completed_query = query.filter(Analysis.status == AnalysisStatus.COMPLETED)
-    avg_score = completed_query.with_entities(Analysis.overall_score).all()
-    avg_score = sum([score[0] or 0 for score in avg_score]) / len(avg_score) if avg_score else 0
-
-    return AnalysisStats(
-        total_analyses=total_analyses,
-        completed_analyses=completed_analyses,
-        failed_analyses=failed_analyses,
-        average_score=avg_score,
-        average_processing_time=0.0,  # TODO: Calculate actual processing time
-        total_tokens_used=0,  # TODO: Sum actual tokens used
-        total_cost=0.0,  # TODO: Calculate actual cost
-        analyses_by_language={},  # TODO: Group by language
-        analyses_by_status={}  # TODO: Group by status
-    )
+    return AnalysisStats(**stats)
 
 
 @router.post("/upload", response_model=AnalysisResponse)
@@ -440,7 +320,8 @@ async def start_analysis(
     db: Session = Depends(get_db)
 ) -> Any:
     """Start analysis processing"""
-    analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()
+    service = get_analysis_service(db)
+    analysis = service.get_analysis_by_id(analysis_id)
     if not analysis:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
