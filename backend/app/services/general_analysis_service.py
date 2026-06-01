@@ -22,17 +22,26 @@ from app.schemas.analysis import AnalysisCreate
 from app.schemas.general_analysis import AnalyzeSelectedRequest
 from app.schemas.llm import StructuredAnalysisOutput
 from app.services.analysis import AnalysisService
-from app.services.llm_service import llm_service
-from app.services.prompt_service import get_prompt_service
-from app.services.storage_provider import get_storage_provider
+from app.services.llm_service import LLMService
+from app.services.prompt_service import PromptService
+from app.providers.base import StorageProvider
 
 
 class GeneralAnalysisService:
     """Encapsulates general analysis use cases."""
 
-    def __init__(self, db: Session):
+    def __init__(
+        self,
+        db: Session,
+        prompt_service: Optional[PromptService] = None,
+        storage_provider: Optional[StorageProvider] = None,
+        llm_service: Optional[LLMService] = None,
+    ):
         self.db = db
         self.analysis_service = AnalysisService(db)
+        self.prompt_service = prompt_service
+        self.storage_provider = storage_provider
+        self.llm_service = llm_service
 
     def create_general_analysis(self, request_data, current_user: User) -> Analysis:
         """Create the analysis and keep prompt setup in one place."""
@@ -155,11 +164,11 @@ class GeneralAnalysisService:
 
     async def analyze_selected_criteria(self, request_data: AnalyzeSelectedRequest, current_user: User) -> dict:
         """Analyze selected criteria and store the result."""
-        prompt_service = get_prompt_service(self.db)
-        storage = get_storage_provider()
+        if not self.prompt_service or not self.storage_provider or not self.llm_service:
+            raise RuntimeError("GeneralAnalysisService dependencies were not provided")
 
-        general_prompt = self._get_general_prompt(prompt_service)
-        selected_criteria = prompt_service.get_selected_criteria(request_data.criteria_ids)
+        general_prompt = self._get_general_prompt(self.prompt_service)
+        selected_criteria = self.prompt_service.get_selected_criteria(request_data.criteria_ids)
 
         if not selected_criteria:
             raise HTTPException(
@@ -167,11 +176,10 @@ class GeneralAnalysisService:
                 detail="No valid criteria found",
             )
 
-        modified_prompt = prompt_service.insert_criteria_into_prompt(general_prompt, selected_criteria)
+        modified_prompt = self.prompt_service.insert_criteria_into_prompt(general_prompt, selected_criteria)
         all_source_code, source_info, total_files_processed = await self._build_source_bundle(
             request_data=request_data,
             current_user=current_user,
-            storage=storage,
         )
 
         full_source_code = source_info + all_source_code
@@ -183,7 +191,7 @@ class GeneralAnalysisService:
         processing_start = time.time()
 
         try:
-            llm_response = await llm_service.send_prompt(
+            llm_response = await self.llm_service.send_prompt(
                 final_prompt,
                 temperature=request_data.temperature,
                 max_tokens=forced_max_tokens,
@@ -241,7 +249,9 @@ class GeneralAnalysisService:
     def resolve_uploaded_file_path(self, file_path: str, user_id: int) -> str:
         """Resolve an uploaded file path to the actual storage locator."""
         try:
-            storage = get_storage_provider()
+            storage = self.storage_provider
+            if storage is None:
+                return file_path
 
             def find_most_recent_existing(files_query):
                 files = files_query.order_by(UploadedFile.created_at.desc()).all()
@@ -346,7 +356,7 @@ class GeneralAnalysisService:
         except Exception:
             return prompt_service._get_default_general_prompt()
 
-    async def _build_source_bundle(self, request_data: AnalyzeSelectedRequest, current_user: User, storage) -> tuple[str, str, int]:
+    async def _build_source_bundle(self, request_data: AnalyzeSelectedRequest, current_user: User) -> tuple[str, str, int]:
         """Collect source code from code entries or uploaded files."""
         all_source_code = ""
         source_info = ""
@@ -384,7 +394,7 @@ class GeneralAnalysisService:
             actual_file_path = source_file_path
             try:
                 actual_file_path = self.resolve_uploaded_file_path(source_file_path, current_user.id)
-                file_content = await storage.read_text(actual_file_path)
+                file_content = await self.storage_provider.read_text(actual_file_path)
                 file_size = len(file_content)
                 file_extension = source_file_path.split('.')[-1] if '.' in source_file_path else 'txt'
 

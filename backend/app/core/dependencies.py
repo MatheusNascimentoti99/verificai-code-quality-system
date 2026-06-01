@@ -11,6 +11,10 @@ from app.core.database import get_db
 from app.core.security import verify_token
 from app.core.exceptions import InvalidTokenError, AuthenticationError
 from app.models.user import User
+from app.services.general_analysis_service import GeneralAnalysisService
+from app.services.llm_service import llm_service
+from app.services.prompt_service import PromptService, get_prompt_service as build_prompt_service
+from app.services.storage_provider import StorageProvider, get_storage_provider as build_storage_provider
 
 # Security schemes
 security = HTTPBearer()
@@ -135,3 +139,33 @@ class RateLimitDependency:
 # Common dependencies
 common_query_params = CommonQueryParams
 rate_limit = RateLimitDependency
+
+
+def get_prompt_service(db: Session = Depends(get_db)) -> PromptService:
+    """Provide a prompt service instance."""
+    return build_prompt_service(db)
+
+
+def get_storage_provider() -> StorageProvider:
+    """Provide the configured storage provider instance."""
+    return build_storage_provider()
+
+
+def get_llm_service():
+    """Provide the shared LLM service instance."""
+    return llm_service
+
+
+def get_general_analysis_service(
+    db: Session = Depends(get_db),
+    prompt_service: PromptService = Depends(get_prompt_service),
+    storage_provider: StorageProvider = Depends(get_storage_provider),
+    llm_service_instance = Depends(get_llm_service),
+) -> GeneralAnalysisService:
+    """Provide the general analysis service with its dependencies."""
+    return GeneralAnalysisService(
+        db=db,
+        prompt_service=prompt_service,
+        storage_provider=storage_provider,
+        llm_service=llm_service_instance,
+    )

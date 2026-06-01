@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File,
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_user
+from app.core.dependencies import get_current_user, get_general_analysis_service
 from app.models.user import User
 from app.models.analysis import Analysis, AnalysisStatus
 from app.models.prompt import Prompt, PromptCategory, PromptType
@@ -29,10 +29,6 @@ from app.schemas.general_analysis import (
 )
 from app.api.v1.analysis import process_analysis
 from app.services.general_analysis_service import GeneralAnalysisService
-from app.services.prompt_service import get_prompt_service
-from app.services.llm_service import llm_service
-from app.services.storage_provider import get_storage_provider
-from app.schemas.llm import StructuredAnalysisOutput
 
 router = APIRouter()
 
@@ -397,10 +393,9 @@ async def options_analyze_selected(request: Request):
 async def analyze_selected_criteria(
     request: AnalyzeSelectedRequest,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    service: GeneralAnalysisService = Depends(get_general_analysis_service)
 ) -> Any:
     """Analyze selected criteria using the service layer."""
-    service = GeneralAnalysisService(db)
     return await service.analyze_selected_criteria(request, current_user)
 
 
