@@ -28,7 +28,6 @@ from app.providers.base import StorageProvider
 from app.services.file_processor import FileProcessor
 from app.services.llm_orchestrator import LLMOrchestrator
 
-
 class GeneralAnalysisService:
     """Encapsulates general analysis use cases."""
 
@@ -664,3 +663,34 @@ Format your response in markdown.
             })
 
         return criteria_results
+    
+    def get_latest_response(self, current_user: User) -> dict:
+        """Get the latest LLM response for debugging purposes."""
+        from app.models.prompt import GeneralAnalysisResult
+        
+        try:
+            latest_result = self.db.query(GeneralAnalysisResult).filter(
+                GeneralAnalysisResult.user_id == current_user.id
+            ).order_by(GeneralAnalysisResult.created_at.desc()).first()
+
+            if latest_result and latest_result.raw_response:
+                usage_data = latest_result.get_usage() or {}
+                token_usage = {
+                    "total_tokens": usage_data.get("totalTokenCount", 0),
+                    "prompt_tokens": usage_data.get("promptTokenCount", 0),
+                    "completion_tokens": usage_data.get("candidatesTokenCount", 0),
+                    # Include additional token data for completeness
+                    "thoughts_tokens": usage_data.get("thoughtsTokenCount", 0)
+                }
+                return {
+                    "response_content": latest_result.raw_response,
+                    "file_exists": bool(latest_result.get_file_paths()),
+                    "file_size": len(latest_result.raw_response) if latest_result.raw_response else 0,
+                    "modified_time": latest_result.created_at.timestamp() if latest_result.created_at else None,
+                    "message": "Resposta da LLM encontrada com sucesso.",
+                    "token_usage": token_usage,
+                }
+            else:
+                raise NotFoundError("LLM response", "latest for user")
+        except Exception as e:
+            raise e
