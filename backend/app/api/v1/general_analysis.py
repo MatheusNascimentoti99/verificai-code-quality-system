@@ -921,37 +921,22 @@ async def get_latest_prompt(
 async def get_latest_response(
     current_user: User = Depends(get_current_user)
 ) -> Any:
+    import sys
     """Get the latest LLM response"""
     try:
-        from pathlib import Path
-
-        # Path to the latest response file
-        prompts_dir = Path(__file__).parent.parent.parent.parent / "prompts"
-        latest_response_path = prompts_dir / "latest_response.txt"
-
-        # Check if the file exists
-        if not latest_response_path.exists():
-            return {
-                "success": False,
-                "message": "Nenhuma resposta da LLM encontrada. Execute uma anlise primeiro.",
-                "response_content": None,
-                "file_exists": False
-            }
-
-        # Read the response content
-        with open(latest_response_path, "r", encoding="utf-8") as f:
-            response_content = f.read()
-
-        # Get file metadata
-        import os
-        file_stats = os.stat(latest_response_path)
-        file_size = file_stats.st_size
-        modified_time = file_stats.st_mtime
-
         # Try to get token usage information from the latest general analysis result
         # FIXED VERSION - Token retrieval implemented correctly - 2025-10-05
         print("DEBUG: TOKEN FIX FINAL - Starting token usage retrieval")  # Final debug marker
         token_usage = {}
+        response_content = {
+            "success": False,
+            "message": "Nenhuma resposta da LLM encontrada. Execute uma análise primeiro.",
+            "response_content": None,
+            "file_exists": False,
+            "file_size": 0,
+            "modified_time": None,
+            "token_usage": {}
+        }
         try:
             from app.core.database import SessionLocal
             from app.models.prompt import GeneralAnalysisResult
@@ -975,6 +960,15 @@ async def get_latest_response(
                     # Include additional token data for completeness
                     "thoughts_tokens": usage_data.get("thoughtsTokenCount", 0)
                 }
+                response_content = {
+                    "success": True,
+                    "message": "Resposta da LLM recuperada com sucesso",
+                    "response_content": latest_result.raw_response,
+                    "file_exists": True,
+                    "file_size": sys.getsizeof(latest_result.raw_response) if latest_result.raw_response else 0,
+                    "modified_time": latest_result.created_at.timestamp() if latest_result.created_at else None,
+                    "token_usage": token_usage
+                }
                 print(f"DEBUG: TOKEN FIX FINAL - Mapped token_usage: {token_usage}")  # Final debug marker
             else:
                 print("DEBUG: TOKEN FIX FINAL - No usage data found")  # Final debug marker
@@ -984,25 +978,12 @@ async def get_latest_response(
             print(f"DEBUG: TOKEN FIX FINAL - Error getting token usage: {token_error}")
             # Continue without token info
             token_usage = {}
-
-        return {
-            "success": True,
-            "message": "Resposta da LLM recuperada com sucesso",
-            "response_content": response_content,
-            "file_exists": True,
-            "file_size": file_size,
-            "modified_time": modified_time,
-            "file_path": str(latest_response_path),
-            "token_usage": token_usage
-        }
+        return response_content
 
     except Exception as e:
         print(f"DEBUG: Error reading latest response: {e}")
-        return {
-            "success": False,
-            "message": f"Erro ao ler resposta da LLM: {str(e)}",
-            "response_content": None,
-            "file_exists": False,
-            "token_usage": {}
-        }
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao ler resposta da LLM: {str(e)}"
+        )
 
