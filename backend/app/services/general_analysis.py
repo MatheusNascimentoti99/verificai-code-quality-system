@@ -23,9 +23,9 @@ from app.schemas.general_analysis import AnalyzeSelectedRequest
 from app.schemas.llm import StructuredAnalysisOutput
 from app.services.analysis import AnalysisService
 from app.services.llm_service import LLMService
-from app.services.prompt_service import PromptService
+from app.services.prompt import PromptService
 from app.providers.base import StorageProvider
-from app.services.file_processor import FileProcessor
+from app.services.file_processor import FileProcessorService
 from app.services.llm_orchestrator import LLMOrchestrator
 
 class GeneralAnalysisService:
@@ -37,7 +37,7 @@ class GeneralAnalysisService:
         prompt_service: Optional[PromptService] = None,
         storage_provider: Optional[StorageProvider] = None,
         llm_service: Optional[LLMService] = None,
-        file_processor: Optional[FileProcessor] = None,
+        file_processor: Optional[FileProcessorService] = None,
         llm_orchestrator: Optional[LLMOrchestrator] = None,
     ):
         self.db = db

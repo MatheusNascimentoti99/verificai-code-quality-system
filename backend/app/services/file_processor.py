@@ -113,7 +113,7 @@ class LanguageDetector:
         return 'text'
 
 
-class FileProcessor:
+class FileProcessorService:
     def __init__(self, db: Optional[Session] = None, storage_provider: Optional[StorageProvider] = None):
         self.db = db
         self.storage_provider = storage_provider

@@ -28,7 +28,7 @@ from app.schemas.general_analysis import (
     GeneralAnalysisResultResponse,
 )
 from app.api.v1.analysis import process_analysis
-from app.services.general_analysis_service import GeneralAnalysisService
+from app.services.general_analysis import GeneralAnalysisService
 from app.core.exceptions import NotFoundError
 
 router = APIRouter()

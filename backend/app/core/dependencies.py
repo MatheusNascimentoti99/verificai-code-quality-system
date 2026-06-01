@@ -11,11 +11,11 @@ from app.core.database import get_db
 from app.core.security import verify_token
 from app.core.exceptions import InvalidTokenError, AuthenticationError
 from app.models.user import User
-from app.services.general_analysis_service import GeneralAnalysisService
+from app.services.general_analysis import GeneralAnalysisService
 from app.services.llm_service import llm_service
-from app.services.prompt_service import PromptService, get_prompt_service as build_prompt_service
+from app.services.prompt import PromptService, get_prompt_service as build_prompt_service
 from app.services.storage_provider import StorageProvider, get_storage_provider as build_storage_provider
-from app.services.file_processor import FileProcessor
+from app.services.file_processor import FileProcessorService
 from app.services.llm_orchestrator import LLMOrchestrator
 
 # Security schemes
@@ -161,9 +161,9 @@ def get_llm_service():
 def get_file_processor(
     db: Session = Depends(get_db),
     storage_provider: StorageProvider = Depends(get_storage_provider),
-) -> FileProcessor:
-    """Provide a FileProcessor instance."""
-    return FileProcessor(db=db, storage_provider=storage_provider)
+) -> FileProcessorService:
+    """Provide a FileProcessorService instance."""
+    return FileProcessorService(db=db, storage_provider=storage_provider)
 
 
 def get_llm_orchestrator(llm_service_instance = Depends(get_llm_service)) -> LLMOrchestrator:
@@ -176,7 +176,7 @@ def get_general_analysis_service(
     prompt_service: PromptService = Depends(get_prompt_service),
     storage_provider: StorageProvider = Depends(get_storage_provider),
     llm_service_instance = Depends(get_llm_service),
-    file_processor: FileProcessor = Depends(get_file_processor),
+    file_processor: FileProcessorService = Depends(get_file_processor),
     llm_orchestrator: LLMOrchestrator = Depends(get_llm_orchestrator),
 ) -> GeneralAnalysisService:
     """Provide the general analysis service with its dependencies."""

@@ -6,7 +6,7 @@ import os
 from app.core.database import get_db
 from app.models.prompt import PromptConfiguration
 from app.models.prompt import GeneralCriteria
-from app.services.prompt_service import PromptService
+from app.services.prompt import PromptService
 from app.services.llm_service import LLMService
 from app.schemas.analysis import AnalysisResponse
 from app.schemas.llm import StructuredAnalysisOutput
