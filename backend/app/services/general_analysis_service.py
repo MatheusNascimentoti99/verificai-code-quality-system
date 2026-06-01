@@ -3,8 +3,13 @@ Service for general analysis workflows.
 """
 
 import json
+import os
+import time
+from datetime import datetime
+from pathlib import Path
 from typing import List, Any, Optional
 
+from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import BusinessRuleError, NotFoundError
@@ -14,7 +19,11 @@ from app.models.prompt import Prompt, PromptType, GeneralCriteria, GeneralAnalys
 from app.models.uploaded_file import UploadedFile, FileStatus
 from app.models.user import User
 from app.schemas.analysis import AnalysisCreate
+from app.schemas.general_analysis import AnalyzeSelectedRequest
+from app.schemas.llm import StructuredAnalysisOutput
 from app.services.analysis import AnalysisService
+from app.services.llm_service import llm_service
+from app.services.prompt_service import get_prompt_service
 from app.services.storage_provider import get_storage_provider
 
 
@@ -144,6 +153,91 @@ class GeneralAnalysisService:
             GeneralAnalysisResultModel.user_id == user_id,
         ).first()
 
+    async def analyze_selected_criteria(self, request_data: AnalyzeSelectedRequest, current_user: User) -> dict:
+        """Analyze selected criteria and store the result."""
+        prompt_service = get_prompt_service(self.db)
+        storage = get_storage_provider()
+
+        general_prompt = self._get_general_prompt(prompt_service)
+        selected_criteria = prompt_service.get_selected_criteria(request_data.criteria_ids)
+
+        if not selected_criteria:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No valid criteria found",
+            )
+
+        modified_prompt = prompt_service.insert_criteria_into_prompt(general_prompt, selected_criteria)
+        all_source_code, source_info, total_files_processed = await self._build_source_bundle(
+            request_data=request_data,
+            current_user=current_user,
+            storage=storage,
+        )
+
+        full_source_code = source_info + all_source_code
+        final_prompt = modified_prompt.replace("[INSERIR CÓDIGO AQUI]", full_source_code)
+
+        self._save_latest_prompt(final_prompt, request_data, current_user, total_files_processed)
+
+        forced_max_tokens = 32000
+        processing_start = time.time()
+
+        try:
+            llm_response = await llm_service.send_prompt(
+                final_prompt,
+                temperature=request_data.temperature,
+                max_tokens=forced_max_tokens,
+                response_model=StructuredAnalysisOutput,
+            )
+        except Exception as llm_error:
+            print(f"ERROR: LLM service failed: {llm_error}")
+            import traceback
+
+            traceback.print_exc()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Erro na comunicacao com o servio de LLM: {str(llm_error)}",
+            )
+
+        llm_response_content = llm_response.get("response", llm_response.get("text", ""))
+        structured_response = getattr(llm_response, "structured_content", {}) or {}
+        self._save_latest_response(llm_response_content)
+
+        extracted_content = self._extract_criteria_results(
+            llm_response_content=llm_response_content,
+            structured_response=structured_response,
+            selected_criteria=selected_criteria,
+            criteria_ids=request_data.criteria_ids,
+        )
+
+        processing_duration = time.time() - processing_start
+        processing_time_str = f"{processing_duration:.2f}s"
+
+        db_analysis_result = self._save_general_analysis_result(
+            request_data=request_data,
+            current_user=current_user,
+            selected_criteria=selected_criteria,
+            extracted_content=extracted_content,
+            llm_response=llm_response,
+            modified_prompt=modified_prompt,
+            processing_time_str=processing_time_str,
+        )
+
+        return {
+            "success": True,
+            "analysis_name": request_data.analysis_name,
+            "criteria_count": len(selected_criteria),
+            "timestamp": llm_response.get("timestamp", datetime.utcnow().isoformat()),
+            "model_used": llm_response.get("model", "unknown-model"),
+            "usage": llm_response.get("usage", {}),
+            "criteria_results": extracted_content.get("criteria_results", {}),
+            "raw_response": extracted_content.get("raw_response", ""),
+            "modified_prompt": modified_prompt,
+            "file_paths": request_data.file_paths,
+            "saved_to_db": True,
+            "db_result_id": db_analysis_result.id if db_analysis_result else None,
+        }
+
     def resolve_uploaded_file_path(self, file_path: str, user_id: int) -> str:
         """Resolve an uploaded file path to the actual storage locator."""
         try:
@@ -241,6 +335,260 @@ class GeneralAnalysisService:
             "results": formatted_results,
             "total": len(formatted_results),
         }
+
+    def _get_general_prompt(self, prompt_service) -> str:
+        """Load the general prompt template, falling back to the default prompt."""
+        try:
+            general_prompt = prompt_service.get_general_prompt(4)
+            if "[INSERIR CÓDIGO AQUI]" not in general_prompt:
+                return prompt_service._get_default_general_prompt()
+            return general_prompt
+        except Exception:
+            return prompt_service._get_default_general_prompt()
+
+    async def _build_source_bundle(self, request_data: AnalyzeSelectedRequest, current_user: User, storage) -> tuple[str, str, int]:
+        """Collect source code from code entries or uploaded files."""
+        all_source_code = ""
+        source_info = ""
+        total_files_processed = 0
+
+        is_using_files = len(request_data.file_paths) > 0
+
+        if not is_using_files and request_data.use_code_entry:
+            code_entry = self._get_code_entry(request_data.code_entry_id, current_user.id)
+            if not code_entry:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Nenhum código encontrado na tabela de colagem. Por favor, cole um código na página de colagem primeiro.",
+                )
+
+            all_source_code = code_entry.code_content or ""
+            file_size = len(all_source_code)
+            source_info = (
+                f"\n\n{'='*60}\n"
+                f"CÓDIGO COLADO: {code_entry.title}\n"
+                f"DESCRIÇÃO: {code_entry.description or 'Sem descrição'}\n"
+                f"LINGUAGEM: {code_entry.language or 'Não detectada'}\n"
+                f"TAMANHO: {file_size} caracteres\n"
+                f"LINHAS: {code_entry.lines_count}\n"
+                f"CRIADO EM: {code_entry.created_at}\n"
+                f"{'='*60}\n\n"
+            )
+            total_files_processed = 1
+            return all_source_code, source_info, total_files_processed
+
+        if not request_data.file_paths:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No file paths provided")
+
+        for source_file_path in request_data.file_paths:
+            actual_file_path = source_file_path
+            try:
+                actual_file_path = self.resolve_uploaded_file_path(source_file_path, current_user.id)
+                file_content = await storage.read_text(actual_file_path)
+                file_size = len(file_content)
+                file_extension = source_file_path.split('.')[-1] if '.' in source_file_path else 'txt'
+
+                source_info += f"\n\n{'='*60}\n"
+                source_info += f"ARQUIVO: {source_file_path}\n"
+                source_info += f"TAMANHO: {file_size} caracteres\n"
+                source_info += f"TIPO: {file_extension.upper()}\n"
+                source_info += f"{'='*60}\n\n"
+                all_source_code += file_content
+                total_files_processed += 1
+            except Exception as file_error:
+                print(f"❌ DEBUG: Error processing file {source_file_path} (actual: {actual_file_path}): {file_error}")
+                continue
+
+        if total_files_processed == 0:
+            is_cloud = "render" in os.environ.get("HOSTNAME", "").lower() or "vercel" in os.environ.get("HOSTNAME", "").lower()
+            detail_msg = "Nenhum código pôde ser lido para análise. O arquivo não existe no disco."
+            if is_cloud:
+                detail_msg += " Devido ao ambiente cloud (Render/Vercel), arquivos locais são perdidos após o restart. Por favor, remova caminhos antigos ou use a 'Colagem de Código'."
+            else:
+                file_previews = request_data.file_paths[:3] if request_data.file_paths else []
+                detail_msg += f" Verifique se os diretórios {file_previews}... existem."
+
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail_msg)
+
+        return all_source_code, source_info, total_files_processed
+
+    def _get_code_entry(self, code_entry_id: Optional[str], user_id: int) -> Optional[CodeEntry]:
+        """Get the code entry requested by the user or the latest active one."""
+        if code_entry_id:
+            return self.db.query(CodeEntry).filter(
+                CodeEntry.id == code_entry_id,
+                CodeEntry.user_id == user_id,
+                CodeEntry.is_active == True,  # noqa: E712
+            ).first()
+
+        return self.db.query(CodeEntry).filter(
+            CodeEntry.user_id == user_id,
+            CodeEntry.is_active == True,  # noqa: E712
+        ).order_by(CodeEntry.created_at.desc()).first()
+
+    def _save_latest_prompt(self, final_prompt: str, request_data: AnalyzeSelectedRequest, current_user: User, total_files_processed: int) -> None:
+        """Persist the final prompt for debugging."""
+        try:
+            prompts_dir = Path(__file__).parent.parent.parent.parent / "prompts"
+            prompts_dir.mkdir(exist_ok=True)
+            latest_prompt_path = prompts_dir / "latest_prompt.txt"
+
+            with open(latest_prompt_path, "w", encoding="utf-8") as f:
+                f.write("=" * 80 + "\n")
+                f.write(f"LTIMO PROMPT ENVIADO PARA LLM - {datetime.now().isoformat()}\n")
+                f.write("=" * 80 + "\n\n")
+                f.write(f"TAMANHO TOTAL: {len(final_prompt)} caracteres\n")
+                f.write(f"ARQUIVOS PROCESSADOS: {total_files_processed}\n")
+                f.write(f"CRITRIOS: {len(request_data.criteria_ids)}\n")
+                f.write(f"USURIO: {current_user.username} (ID: {current_user.id})\n\n")
+                f.write("=" * 80 + "\n")
+                f.write("CONTEDO COMPLETO DO PROMPT:\n")
+                f.write("=" * 80 + "\n\n")
+                f.write(final_prompt)
+                f.write("\n\n" + "=" * 80 + "\n")
+                f.write("FIM DO PROMPT\n")
+                f.write("=" * 80 + "\n")
+        except Exception as save_error:
+            print(f"DEBUG: Erro ao salvar prompt em arquivo: {save_error}")
+
+    def _save_latest_response(self, llm_response_content: str) -> None:
+        """Persist the raw LLM response for debugging."""
+        try:
+            prompts_dir = Path(__file__).parent.parent.parent.parent / "prompts"
+            prompts_dir.mkdir(exist_ok=True)
+            latest_response_path = prompts_dir / "latest_response.txt"
+
+            with open(latest_response_path, "w", encoding="utf-8") as f:
+                f.write(llm_response_content)
+        except Exception as save_error:
+            print(f"DEBUG: Erro ao salvar resposta em arquivo: {save_error}")
+
+    def _extract_criteria_results(
+        self,
+        llm_response_content: str,
+        structured_response: dict,
+        selected_criteria,
+        criteria_ids: List[str],
+    ) -> dict:
+        """Extract the criteria results from a structured or free-form LLM response."""
+        def normalize_structured_criteria_results(structured_data: dict) -> dict:
+            criteria_results = {}
+            for item in structured_data.get("criteria_results", []):
+                if not isinstance(item, dict):
+                    continue
+
+                criterion_id = item.get("id")
+                if criterion_id is None:
+                    continue
+
+                criterion = next((c for c in selected_criteria if c.id == criterion_id), None)
+                criteria_results[f"criteria_{criterion_id}"] = {
+                    "name": criterion.text if criterion else f"Critério {criterion_id}",
+                    "content": (
+                        f"**Status:** {item.get('status', 'Análise requerida')}\n"
+                        f"**Confiança:** {item.get('confidence', 0.0):.2f}\n\n"
+                        f"### Análise:\n{item.get('assessment', '')}\n\n"
+                        f"### Evidências:\n" + "\n".join(f"- {evidence}" for evidence in item.get("evidence", [])) +
+                        ("\n\n### Recomendações:\n" + "\n".join(f"- {recommendation}" for recommendation in item.get("recommendations", [])) if item.get("recommendations") else "")
+                    ).strip()
+                }
+            return criteria_results
+
+        if structured_response.get("criteria_results"):
+            return {
+                "criteria_results": normalize_structured_criteria_results(structured_response),
+                "raw_response": llm_response_content.strip(),
+                "structured_response": structured_response,
+            }
+
+        if not llm_response_content:
+            return {"criteria_results": {}, "raw_response": "", "structured_response": structured_response}
+
+        try:
+            import re
+
+            criteria_results = {}
+
+            if "#FIM_ANALISE_CRITERIO#" in llm_response_content:
+                blocks = re.split(r'#FIM_ANALISE_CRITERIO#', llm_response_content)
+                for block in blocks:
+                    match = re.search(r'##\s*Crit[ée]rio\s*(\d+(?:\.\d+)*)\s*[:\-]?\s*(.+?)\n(.*?)$', block, re.DOTALL)
+                    if match:
+                        crit_id = match.group(1)
+                        crit_name = match.group(2).strip()
+                        crit_content = match.group(3).strip()
+
+                        criteria_results[f"criteria_{crit_id}"] = {
+                            "name": crit_name,
+                            "content": crit_content,
+                        }
+
+            if not criteria_results or len(criteria_results) < len(criteria_ids):
+                criteria_pattern = r'##\s*Crit[ée]rio\s*(\d+(?:\.\d+)*)\s*[:\-]?\s*(.+?)\n(.*?)(?=\s*##\s*Crit[ée]rio\s*\d+|\s*##\s*(?:Resultado|Recomendações)\s*(?:Geral|)|#FIM_ANALISE_CRITERIO#|#FIM#|$)'
+                matches = re.findall(criteria_pattern, llm_response_content, re.DOTALL)
+
+                for match in matches:
+                    crit_id = match[0]
+                    if f"criteria_{crit_id}" not in criteria_results:
+                        criteria_results[f"criteria_{crit_id}"] = {
+                            "name": match[1].strip(),
+                            "content": match[2].strip(),
+                        }
+
+            return {
+                "criteria_results": criteria_results,
+                "raw_response": llm_response_content.strip(),
+                "structured_response": structured_response,
+            }
+        except Exception as extract_error:
+            print(f"ERROR: Extraction failed: {extract_error}")
+            return {
+                "criteria_results": {},
+                "raw_response": llm_response_content,
+                "structured_response": structured_response,
+            }
+
+    def _save_general_analysis_result(
+        self,
+        request_data: AnalyzeSelectedRequest,
+        current_user: User,
+        selected_criteria,
+        extracted_content: dict,
+        llm_response: dict,
+        modified_prompt: str,
+        processing_time_str: str,
+    ) -> Optional[GeneralAnalysisResultModel]:
+        """Persist the analysis result to the database."""
+        import traceback
+
+        try:
+            safe_analysis_name = request_data.analysis_name[:197] + "..." if len(request_data.analysis_name) > 200 else request_data.analysis_name
+
+            db_analysis_result = GeneralAnalysisResultModel(
+                analysis_name=safe_analysis_name,
+                criteria_count=len(selected_criteria),
+                user_id=current_user.id,
+                criteria_results=extracted_content.get("criteria_results", {}),
+                raw_response=extracted_content.get("raw_response", ""),
+                model_used=llm_response.get("model", "claude-3-sonnet-20240229"),
+                usage=llm_response.get("usage", {}),
+                file_paths=json.dumps(request_data.file_paths),
+                modified_prompt=modified_prompt,
+                processing_time=processing_time_str,
+            )
+
+            self.db.add(db_analysis_result)
+            self.db.flush()
+            self.db.commit()
+            self.db.commit()
+            self.db.refresh(db_analysis_result)
+
+            return db_analysis_result
+        except Exception as db_error:
+            print(f"CRITICAL ERROR: Database save failed: {str(db_error)}")
+            traceback.print_exc()
+            self.db.rollback()
+            return None
 
     def _parse_criteria_id(self, criteria_id: str) -> int:
         """Extract the numeric criteria ID."""
