@@ -321,14 +321,6 @@ def detect_programming_language(code: str) -> str:
 
     return 'text'
 
-
-@router.get("/code-entries/test")
-async def test_endpoint():
-    """Test endpoint to check if module is loading"""
-    print("DEBUG: test_endpoint called")
-    return {"message": "Module is working correctly", "authenticated": "no"}
-
-
 @router.post("/code-entries/detect-language", response_model=CodeLanguageDetection)
 async def detect_language(code_content: str = Body(...)):
     """
