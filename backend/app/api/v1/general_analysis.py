@@ -152,180 +152,6 @@ async def delete_criteria_post(
 
     return {"message": "Criterion deleted successfully", "deleted_id": actual_id}
 
-
-@router.delete("/criteria-temp/{criteria_id}")
-async def delete_criteria_temp(
-    criteria_id: str,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-) -> Any:
-    """Temporary delete criterion endpoint"""
-    try:
-        actual_id = int(criteria_id.replace("criteria_", ""))
-    except ValueError:
-        return {"error": "Invalid criteria ID format"}
-
-    criterion = db.query(GeneralCriteria).filter(
-        GeneralCriteria.id == actual_id
-    ).first()
-
-    if not criterion:
-        return {"error": f"Criterion not found with ID {actual_id}"}
-
-    db.delete(criterion)
-    db.commit()
-
-    return {"message": "Criterion deleted successfully", "deleted_id": actual_id}
-
-
-@router.post("/criteria-simple/{criteria_id}/delete")
-async def delete_criteria_simple(
-    criteria_id: str,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-) -> Any:
-    """Simple delete criterion endpoint"""
-    try:
-        actual_id = int(criteria_id.replace("criteria_", ""))
-    except ValueError:
-        return {"error": "Invalid criteria ID format"}
-
-    criterion = db.query(GeneralCriteria).filter(
-        GeneralCriteria.id == actual_id
-    ).first()
-
-    if not criterion:
-        return {"error": f"Criterion not found with ID {actual_id}"}
-
-    db.delete(criterion)
-    db.commit()
-
-    return {"message": "Criterion deleted successfully", "deleted_id": actual_id}
-
-
-@router.get("/debug-direct")
-async def debug_direct(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-) -> Any:
-    """Direct database test"""
-    try:
-        # Test direct database access
-        criterion = db.query(GeneralCriteria).filter(GeneralCriteria.id == 57).first()
-        return {
-            "criterion_57_found": criterion is not None,
-            "criterion_57_text": criterion.text if criterion else None,
-            "criterion_57_user_id": criterion.user_id if criterion else None,
-            "total_criteria": db.query(GeneralCriteria).count()
-        }
-    except Exception as e:
-        return {"error": str(e)}
-
-
-@router.get("/debug-delete-test")
-async def debug_delete_test(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-) -> Any:
-    """Test DELETE logic directly"""
-    try:
-        # Test the exact logic from DELETE endpoint
-        criteria_id = 'criteria_23'
-        actual_id = int(criteria_id.replace('criteria_', ''))
-
-        criterion = db.query(GeneralCriteria).filter(
-            GeneralCriteria.id == actual_id
-        ).first()
-
-        if criterion:
-            result = {
-                "found": True,
-                "id": criterion.id,
-                "user_id": criterion.user_id,
-                "text": criterion.text,
-                "is_active": criterion.is_active
-            }
-        else:
-            all_criteria = db.query(GeneralCriteria).all()
-            all_ids = [c.id for c in all_criteria]
-            result = {
-                "found": False,
-                "searched_id": actual_id,
-                "available_ids": all_ids
-            }
-
-        return result
-    except Exception as e:
-        return {"error": str(e)}
-
-
-@router.get("/debug-test")
-async def debug_test(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-) -> Any:
-    """Debug endpoint to verify if changes are applied"""
-    # Test finding a criterion without user_id filter
-    criterion = db.query(GeneralCriteria).filter(
-        GeneralCriteria.id == 55
-    ).first()
-
-    return {
-        "message": "Debug test successful",
-        "criterion_found": criterion is not None,
-        "criterion_text": criterion.text if criterion else None,
-        "criterion_user_id": criterion.user_id if criterion else None,
-        "current_user_id": current_user.id
-    }
-
-
-@router.get("/latest-code-entry")
-async def get_latest_code_entry(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-    service: GeneralAnalysisService = Depends(get_general_analysis_service)
-) -> Any:
-    """Get the latest code entry from the current user"""
-    try:
-        print(f"DEBUG: Getting latest code entry for user {current_user.id}")
-        latest_entry = service.get_latest_code_entry(current_user.id)
-
-        if not latest_entry:
-            return {
-                "success": False,
-                "message": "Nenhum código encontrado. Por favor, cole um código na página de colagem primeiro.",
-                "code_content": None,
-                "title": None,
-                "language": None,
-                "lines_count": 0,
-                "characters_count": 0
-            }
-
-        print(f"DEBUG: Found latest code entry: {latest_entry.title} ({latest_entry.lines_count} lines)")
-
-        return {
-            "success": True,
-            "message": "Código recuperado com sucesso",
-            "code_content": latest_entry.code_content,
-            "title": latest_entry.title,
-            "description": latest_entry.description,
-            "language": latest_entry.language,
-            "lines_count": latest_entry.lines_count,
-            "characters_count": latest_entry.characters_count,
-            "created_at": latest_entry.created_at,
-            "entry_id": str(latest_entry.id)
-        }
-
-    except Exception as e:
-        print(f"ERROR in get_latest_code_entry: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error retrieving latest code entry: {str(e)}"
-        )
-
-
 @router.get("/results/{analysis_id}", response_model=GeneralAnalysisResultResponse)
 async def get_general_analysis_result(
     analysis_id: int,
@@ -335,54 +161,6 @@ async def get_general_analysis_result(
     """Get general analysis result"""
     payload = service.get_general_analysis_result(analysis_id, current_user)
     return GeneralAnalysisResultResponse(**payload)
-
-
-@router.post("/get-latest-code-entry")
-async def get_latest_code_entry_post(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-    service: GeneralAnalysisService = Depends(get_general_analysis_service)
-) -> Any:
-    """Get the latest code entry from the current user using POST method"""
-    try:
-        print(f"DEBUG: Getting latest code entry for user {current_user.id}")
-        latest_entry = service.get_latest_code_entry(current_user.id)
-
-        if not latest_entry:
-            return {
-                "success": False,
-                "message": "Nenhum código encontrado. Por favor, cole um código na página de colagem primeiro.",
-                "code_content": None,
-                "title": None,
-                "language": None,
-                "lines_count": 0,
-                "characters_count": 0
-            }
-
-        print(f"DEBUG: Found latest code entry: {latest_entry.title} ({latest_entry.lines_count} lines)")
-
-        return {
-            "success": True,
-            "message": "Código recuperado com sucesso",
-            "code_content": latest_entry.code_content,
-            "title": latest_entry.title,
-            "description": latest_entry.description,
-            "language": latest_entry.language,
-            "lines_count": latest_entry.lines_count,
-            "characters_count": latest_entry.characters_count,
-            "created_at": latest_entry.created_at,
-            "entry_id": str(latest_entry.id)
-        }
-
-    except Exception as e:
-        print(f"ERROR in get_latest_code_entry_post: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error retrieving latest code entry: {str(e)}"
-        )
-
 
 @router.options("/analyze-selected")
 async def options_analyze_selected(request: Request):
@@ -417,39 +195,6 @@ async def get_analysis_results(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error retrieving analysis results: {str(e)}"
         )
-
-
-@router.get("/debug-test-public")
-async def test_endpoint() -> Any:
-    """Simple test endpoint"""
-    return {"message": "Test endpoint works", "status": "ok"}
-
-
-@router.get("/debug-file-path")
-async def debug_file_path(file_path: str, db: Session = Depends(get_db)) -> Any:
-    """Debug endpoint to test file path resolution"""
-    try:
-        # Test with user_id = 1 (test user)
-        actual_path = get_uploaded_file_path(file_path, db, 1)
-
-        import os
-        file_exists = os.path.exists(actual_path)
-
-        return {
-            "original_path": file_path,
-            "resolved_path": actual_path,
-            "file_exists": file_exists or actual_path.startswith("http://") or actual_path.startswith("https://"),
-            "can_read": os.access(actual_path, os.R_OK) if file_exists else False
-        }
-    except Exception as e:
-        return {"error": str(e), "original_path": file_path}
-
-
-@router.post("/debug-cors-test")
-async def debug_cors_test() -> Any:
-    """Test CORS without authentication"""
-    return {"message": "CORS test successful", "status": "ok", "cors": "working"}
-
 
 @router.get("/latest-raw-response")
 async def get_latest_raw_response(
@@ -533,82 +278,6 @@ async def get_criteria_working(
             detail=f"Error retrieving criteria: {str(e)}"
         )
 
-
-@router.get("/criteria_public_test")
-async def get_criteria_public_test(
-    db: Session = Depends(get_db)
-) -> Any:
-    """Alternative test endpoint without hyphen"""
-    try:
-        # Get all active criteria from database
-        all_criteria = db.query(GeneralCriteria).filter(
-            GeneralCriteria.is_active == True
-        ).order_by(GeneralCriteria.order, GeneralCriteria.created_at).all()
-
-        # Convert to response format
-        result = []
-        for criterion in all_criteria:
-            result.append({
-                "id": f"criteria_{criterion.id}",
-                "text": criterion.text,
-                "active": criterion.is_active
-            })
-
-        return result
-
-    except Exception as e:
-        print(f"ERROR in get_criteria_public_test: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error retrieving criteria: {str(e)}"
-        )
-
-
-@router.get("/results-public")
-async def get_analysis_results_public(
-    db: Session = Depends(get_db)
-) -> Any:
-    """Get all analysis results (public endpoint for testing)"""
-    try:
-        # Get all analysis results for user_id = 1 (testing)
-        results = db.query(GeneralAnalysisResultModel).filter(
-            GeneralAnalysisResultModel.user_id == 1
-        ).order_by(GeneralAnalysisResultModel.created_at.desc()).all()
-
-        # Convert to response format
-        formatted_results = []
-        for result in results:
-            formatted_results.append({
-                "id": result.id,
-                "analysis_name": result.analysis_name,
-                "criteria_count": result.criteria_count,
-                "timestamp": result.created_at,
-                "model_used": result.model_used,
-                "processing_time": result.processing_time,
-                "file_paths": result.get_file_paths(),
-                "criteria_results": result.get_criteria_results(),
-                "raw_response": result.raw_response,
-                "usage": result.get_usage()
-            })
-
-        return {
-            "success": True,
-            "results": formatted_results,
-            "total": len(formatted_results)
-        }
-
-    except Exception as e:
-        print(f"ERROR in get_analysis_results_public: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error retrieving analysis results: {str(e)}"
-        )
-
-
 @router.get("/results/{result_id}")
 async def get_analysis_result(
     result_id: int,
@@ -630,63 +299,6 @@ async def get_analysis_result(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error retrieving analysis result: {str(e)}"
         )
-
-
-@router.put("/results/{analysis_id}/manual", response_model=GeneralAnalysisResultResponse)
-async def update_manual_result(
-    analysis_id: int,
-    result_data: dict,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-    service: GeneralAnalysisService = Depends(get_general_analysis_service)
-) -> Any:
-    """Update analysis result manually"""
-    analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()
-    if not analysis:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Analysis not found"
-        )
-
-    # Check permissions
-    if analysis.user_id != current_user.id and not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied"
-        )
-
-    if not analysis.result:
-        # Create manual result
-        from app.models.analysis import AnalysisResult
-        manual_result = AnalysisResult(
-            analysis_id=analysis.id,
-            summary=result_data.get("overall_assessment", ""),
-            detailed_findings="Manual analysis result",
-            recommendations=result_data.get("recommendations", ""),
-            confidence=result_data.get("confidence", 1.0),
-            model_used="manual",
-            tokens_used=0,
-            processing_time="0.0",
-            quality_score=result_data.get("score", 0),
-            issues=result_data.get("criteria_results", [])
-        )
-        db.add(manual_result)
-    else:
-        # Update existing result
-        analysis.result.summary = result_data.get("overall_assessment", analysis.result.summary)
-        analysis.result.confidence = result_data.get("confidence", analysis.result.confidence)
-        analysis.result.quality_score = result_data.get("score", analysis.result.quality_score)
-        analysis.result.issues = result_data.get("criteria_results", analysis.result.issues)
-        analysis.result.model_used = "manual"
-
-    db.commit()
-    db.refresh(analysis)
-
-    # Return updated result using the service
-    payload = service.get_general_analysis_result(analysis_id, current_user)
-    return GeneralAnalysisResultResponse(**payload)
-
-
 
 @router.delete("/results/{result_id}")
 async def delete_analysis_result(
@@ -829,84 +441,25 @@ async def delete_all_analysis_results(
 
 @router.get("/latest-prompt")
 async def get_latest_prompt(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    service: GeneralAnalysisService = Depends(get_general_analysis_service)
 ) -> Any:
     """Get the latest prompt sent to LLM"""
     print("DEBUG: LATEST PROMPT ENDPOINT CALLED")
     try:
-        from pathlib import Path
-
-        # Path to the latest prompt file
-        prompts_dir = Path(__file__).parent.parent.parent.parent / "prompts"
-        latest_prompt_path = prompts_dir / "latest_prompt.txt"
-
-        # Check if the file exists
-        if not latest_prompt_path.exists():
-            return {
-                "success": False,
-                "message": "Nenhum prompt encontrado. Execute uma anlise primeiro.",
-                "prompt_content": None,
-                "file_exists": False
-            }
-
-        # Read the prompt content
-        with open(latest_prompt_path, "r", encoding="utf-8") as f:
-            prompt_content = f.read()
-
-        # Get file metadata
-        import os
-        file_stats = os.stat(latest_prompt_path)
-        file_size = file_stats.st_size
-        modified_time = file_stats.st_mtime
-
         # Try to get token usage information from the latest general analysis result
-        # FIXED VERSION - Token retrieval implemented correctly - 2025-10-05
-        print("DEBUG: TOKEN FIX FINAL - Starting token usage retrieval")  # Final debug marker
-        token_usage = {}
-        try:
-            from app.core.database import SessionLocal
-            from app.models.prompt import GeneralAnalysisResult
-
-            db = SessionLocal()
-            # Get the most recent general analysis result for the current user
-            latest_result = db.query(GeneralAnalysisResult)\
-                .filter(GeneralAnalysisResult.user_id == current_user.id)\
-                .order_by(GeneralAnalysisResult.created_at.desc())\
-                .first()
-
-            if latest_result and latest_result.usage:
-                # Use the complete token usage data from Gemini
-                usage_data = latest_result.usage
-                print("DEBUG: TOKEN FIX FINAL - Found usage data")  # Final debug marker
-
-                token_usage = {
-                    "total_tokens": usage_data.get("totalTokenCount", 0),
-                    "prompt_tokens": usage_data.get("promptTokenCount", 0),
-                    "completion_tokens": usage_data.get("candidatesTokenCount", 0),
-                    # Include additional token data for completeness
-                    "thoughts_tokens": usage_data.get("thoughtsTokenCount", 0)
-                }
-                print(f"DEBUG: TOKEN FIX FINAL - Mapped token_usage: {token_usage}")  # Final debug marker
-            else:
-                print("DEBUG: TOKEN FIX FINAL - No usage data found")  # Final debug marker
-
-            db.close()
-        except Exception as token_error:
-            print(f"DEBUG: TOKEN FIX FINAL - Error getting token usage: {token_error}")
-            # Continue without token info
-            token_usage = {}
-
-        return {
-            "success": True,
-            "message": "Prompt recuperado com sucesso",
-            "prompt_content": prompt_content,
-            "file_exists": True,
-            "file_size": file_size,
-            "modified_time": modified_time,
-            "file_path": str(latest_prompt_path),
-            "token_usage": token_usage
-        }
-
+        res = service.get_latest_prompt(current_user)
+        if not res:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Nenhuma resposta encontrada. Execute uma análise primeiro."
+            )
+        return res
+    except NotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Nenhuma resposta encontrada. Execute uma análise primeiro."
+        )
     except Exception as e:
         print(f"DEBUG: Error reading latest prompt: {e}")
         return {

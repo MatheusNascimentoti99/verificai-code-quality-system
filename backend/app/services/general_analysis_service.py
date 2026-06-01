@@ -694,3 +694,28 @@ Format your response in markdown.
                 raise NotFoundError("LLM response", "latest for user")
         except Exception as e:
             raise e
+    
+    def get_latest_prompt(self, current_user: User) -> dict:
+        """Get the latest prompt sent to the LLM for debugging purposes."""
+        from app.models.prompt import GeneralAnalysisResult
+        
+        try:
+            latest_result = self.db.query(GeneralAnalysisResult).filter(
+                GeneralAnalysisResult.user_id == current_user.id
+            ).order_by(GeneralAnalysisResult.created_at.desc()).first()
+            if not latest_result or not latest_result.modified_prompt:
+                raise NotFoundError("LLM prompt", "latest for user")
+
+            return {
+                "prompt_content": latest_result.modified_prompt,
+                "file_exists": True,
+                "file_size": len(latest_result.modified_prompt),
+                "modified_time": latest_result.created_at.timestamp() if latest_result.created_at else None,
+                "message": "Último prompt enviado para a LLM encontrado com sucesso.",
+                "token_usage": latest_result.get_usage() or {},
+            }
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Erro ao ler o último prompt: {str(e)}"
+            )
