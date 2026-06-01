@@ -25,6 +25,8 @@ from app.services.analysis import AnalysisService
 from app.services.llm_service import LLMService
 from app.services.prompt_service import PromptService
 from app.providers.base import StorageProvider
+from app.services.file_processor import FileProcessor
+from app.services.llm_orchestrator import LLMOrchestrator
 
 
 class GeneralAnalysisService:
@@ -36,12 +38,16 @@ class GeneralAnalysisService:
         prompt_service: Optional[PromptService] = None,
         storage_provider: Optional[StorageProvider] = None,
         llm_service: Optional[LLMService] = None,
+        file_processor: Optional[FileProcessor] = None,
+        llm_orchestrator: Optional[LLMOrchestrator] = None,
     ):
         self.db = db
         self.analysis_service = AnalysisService(db)
         self.prompt_service = prompt_service
         self.storage_provider = storage_provider
         self.llm_service = llm_service
+        self.file_processor = file_processor
+        self.llm_orchestrator = llm_orchestrator
 
     def create_general_analysis(self, request_data, current_user: User) -> Analysis:
         """Create the analysis and keep prompt setup in one place."""
@@ -164,7 +170,7 @@ class GeneralAnalysisService:
 
     async def analyze_selected_criteria(self, request_data: AnalyzeSelectedRequest, current_user: User) -> dict:
         """Analyze selected criteria and store the result."""
-        if not self.prompt_service or not self.storage_provider or not self.llm_service:
+        if not self.prompt_service or not self.file_processor or not self.llm_orchestrator:
             raise RuntimeError("GeneralAnalysisService dependencies were not provided")
 
         general_prompt = self._get_general_prompt(self.prompt_service)
@@ -177,7 +183,7 @@ class GeneralAnalysisService:
             )
 
         modified_prompt = self.prompt_service.insert_criteria_into_prompt(general_prompt, selected_criteria)
-        all_source_code, source_info, total_files_processed = await self._build_source_bundle(
+        all_source_code, source_info, total_files_processed = await self.file_processor.build_source_bundle(
             request_data=request_data,
             current_user=current_user,
         )
@@ -185,38 +191,24 @@ class GeneralAnalysisService:
         full_source_code = source_info + all_source_code
         final_prompt = modified_prompt.replace("[INSERIR CÓDIGO AQUI]", full_source_code)
 
-        self._save_latest_prompt(final_prompt, request_data, current_user, total_files_processed)
-
-        forced_max_tokens = 32000
         processing_start = time.time()
 
+        # Delegate LLM call, saving and extraction to orchestrator
         try:
-            llm_response = await self.llm_service.send_prompt(
-                final_prompt,
-                temperature=request_data.temperature,
-                max_tokens=forced_max_tokens,
-                response_model=StructuredAnalysisOutput,
+            extracted_content, llm_response = await self.llm_orchestrator.analyze(
+                final_prompt=final_prompt,
+                request_data=request_data,
+                current_user=current_user,
+                selected_criteria=selected_criteria,
+                criteria_ids=request_data.criteria_ids,
+                total_files_processed=total_files_processed,
+                modified_prompt=modified_prompt,
             )
         except Exception as llm_error:
-            print(f"ERROR: LLM service failed: {llm_error}")
-            import traceback
-
-            traceback.print_exc()
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Erro na comunicacao com o servio de LLM: {str(llm_error)}",
             )
-
-        llm_response_content = llm_response.get("response", llm_response.get("text", ""))
-        structured_response = getattr(llm_response, "structured_content", {}) or {}
-        self._save_latest_response(llm_response_content)
-
-        extracted_content = self._extract_criteria_results(
-            llm_response_content=llm_response_content,
-            structured_response=structured_response,
-            selected_criteria=selected_criteria,
-            criteria_ids=request_data.criteria_ids,
-        )
 
         processing_duration = time.time() - processing_start
         processing_time_str = f"{processing_duration:.2f}s"

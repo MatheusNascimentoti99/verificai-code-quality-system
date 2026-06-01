@@ -1,4 +1,156 @@
 """
+File processing helpers: resolve paths and build source bundles.
+"""
+import os
+from pathlib import Path
+from typing import Optional, Tuple
+
+from fastapi import HTTPException, status
+from sqlalchemy.orm import Session
+
+from app.models.code_entry import CodeEntry
+from app.models.uploaded_file import UploadedFile, FileStatus
+from app.providers.base import StorageProvider
+
+
+class FileProcessor:
+    def __init__(self, db: Session, storage_provider: Optional[StorageProvider] = None):
+        self.db = db
+        self.storage_provider = storage_provider
+
+    def resolve_uploaded_file_path(self, file_path: str, user_id: int) -> str:
+        """Resolve an uploaded file path to the actual storage locator."""
+        try:
+            storage = self.storage_provider
+            if storage is None:
+                return file_path
+
+            def find_most_recent_existing(files_query):
+                files = files_query.order_by(UploadedFile.created_at.desc()).all()
+                for uploaded_file in files:
+                    file_locator = uploaded_file.storage_path
+                    if str(file_locator).startswith(("http://", "https://", "minio://")):
+                        return uploaded_file, file_locator
+                    if storage.path_exists(file_locator):
+                        return uploaded_file, file_locator
+                return None, None
+
+            files_query = self.db.query(UploadedFile).filter(
+                UploadedFile.relative_path == file_path,
+                UploadedFile.user_id == user_id,
+                UploadedFile.status == FileStatus.COMPLETED,
+            )
+            uploaded_file, full_disk_path = find_most_recent_existing(files_query)
+
+            if not uploaded_file:
+                files_query = self.db.query(UploadedFile).filter(
+                    UploadedFile.original_name == file_path,
+                    UploadedFile.user_id == user_id,
+                    UploadedFile.status == FileStatus.COMPLETED,
+                )
+                uploaded_file, full_disk_path = find_most_recent_existing(files_query)
+
+            if not uploaded_file:
+                filename = file_path.split('/')[-1].split('\\')[-1]
+                files_query = self.db.query(UploadedFile).filter(
+                    UploadedFile.original_name == filename,
+                    UploadedFile.user_id == user_id,
+                    UploadedFile.status == FileStatus.COMPLETED,
+                )
+                uploaded_file, full_disk_path = find_most_recent_existing(files_query)
+
+            if not uploaded_file:
+                files_query = self.db.query(UploadedFile).filter(
+                    UploadedFile.storage_path.like(f'%{file_path}%'),
+                    UploadedFile.user_id == user_id,
+                    UploadedFile.status == FileStatus.COMPLETED,
+                )
+                uploaded_file, full_disk_path = find_most_recent_existing(files_query)
+
+            return full_disk_path if uploaded_file and full_disk_path else file_path
+        except Exception:
+            return file_path
+
+    def _get_code_entry(self, code_entry_id: Optional[str], user_id: int) -> Optional[CodeEntry]:
+        """Get the code entry requested by the user or the latest active one."""
+        if code_entry_id:
+            return self.db.query(CodeEntry).filter(
+                CodeEntry.id == code_entry_id,
+                CodeEntry.user_id == user_id,
+                CodeEntry.is_active == True,  # noqa: E712
+            ).first()
+
+        return self.db.query(CodeEntry).filter(
+            CodeEntry.user_id == user_id,
+            CodeEntry.is_active == True,  # noqa: E712
+        ).order_by(CodeEntry.created_at.desc()).first()
+
+    async def build_source_bundle(self, request_data, current_user) -> Tuple[str, str, int]:
+        """Collect source code from code entries or uploaded files."""
+        all_source_code = ""
+        source_info = ""
+        total_files_processed = 0
+
+        is_using_files = len(request_data.file_paths) > 0
+
+        if not is_using_files and request_data.use_code_entry:
+            code_entry = self._get_code_entry(request_data.code_entry_id, current_user.id)
+            if not code_entry:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Nenhum código encontrado na tabela de colagem. Por favor, cole um código na página de colagem primeiro.",
+                )
+
+            all_source_code = code_entry.code_content or ""
+            file_size = len(all_source_code)
+            source_info = (
+                f"\n\n{'='*60}\n"
+                f"CÓDIGO COLADO: {code_entry.title}\n"
+                f"DESCRIÇÃO: {code_entry.description or 'Sem descrição'}\n"
+                f"LINGUAGEM: {code_entry.language or 'Não detectada'}\n"
+                f"TAMANHO: {file_size} caracteres\n"
+                f"LINHAS: {code_entry.lines_count}\n"
+                f"CRIADO EM: {code_entry.created_at}\n"
+                f"{'='*60}\n\n"
+            )
+            total_files_processed = 1
+            return all_source_code, source_info, total_files_processed
+
+        if not request_data.file_paths:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No file paths provided")
+
+        for source_file_path in request_data.file_paths:
+            actual_file_path = source_file_path
+            try:
+                actual_file_path = self.resolve_uploaded_file_path(source_file_path, current_user.id)
+                file_content = await self.storage_provider.read_text(actual_file_path)
+                file_size = len(file_content)
+                file_extension = source_file_path.split('.')[-1] if '.' in source_file_path else 'txt'
+
+                source_info += f"\n\n{'='*60}\n"
+                source_info += f"ARQUIVO: {source_file_path}\n"
+                source_info += f"TAMANHO: {file_size} caracteres\n"
+                source_info += f"TIPO: {file_extension.upper()}\n"
+                source_info += f"{'='*60}\n\n"
+                all_source_code += file_content
+                total_files_processed += 1
+            except Exception as file_error:
+                print(f"❌ DEBUG: Error processing file {source_file_path} (actual: {actual_file_path}): {file_error}")
+                continue
+
+        if total_files_processed == 0:
+            is_cloud = "render" in os.environ.get("HOSTNAME", "").lower() or "vercel" in os.environ.get("HOSTNAME", "").lower()
+            detail_msg = "Nenhum código pôde ser lido para análise. O arquivo não existe no disco."
+            if is_cloud:
+                detail_msg += " Devido ao ambiente cloud (Render/Vercel), arquivos locais são perdidos após o restart. Por favor, remova caminhos antigos ou use a 'Colagem de Código'."
+            else:
+                file_previews = request_data.file_paths[:3] if request_data.file_paths else []
+                detail_msg += f" Verifique se os diretórios {file_previews}... existem."
+
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail_msg)
+
+        return all_source_code, source_info, total_files_processed
+"""
 File processor service for VerificAI Backend
 """
 

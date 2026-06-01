@@ -15,6 +15,8 @@ from app.services.general_analysis_service import GeneralAnalysisService
 from app.services.llm_service import llm_service
 from app.services.prompt_service import PromptService, get_prompt_service as build_prompt_service
 from app.services.storage_provider import StorageProvider, get_storage_provider as build_storage_provider
+from app.services.file_processor import FileProcessor
+from app.services.llm_orchestrator import LLMOrchestrator
 
 # Security schemes
 security = HTTPBearer()
@@ -156,11 +158,26 @@ def get_llm_service():
     return llm_service
 
 
+def get_file_processor(
+    db: Session = Depends(get_db),
+    storage_provider: StorageProvider = Depends(get_storage_provider),
+) -> FileProcessor:
+    """Provide a FileProcessor instance."""
+    return FileProcessor(db=db, storage_provider=storage_provider)
+
+
+def get_llm_orchestrator(llm_service_instance = Depends(get_llm_service)) -> LLMOrchestrator:
+    """Provide an LLMOrchestrator instance."""
+    return LLMOrchestrator(llm_service=llm_service_instance)
+
+
 def get_general_analysis_service(
     db: Session = Depends(get_db),
     prompt_service: PromptService = Depends(get_prompt_service),
     storage_provider: StorageProvider = Depends(get_storage_provider),
     llm_service_instance = Depends(get_llm_service),
+    file_processor: FileProcessor = Depends(get_file_processor),
+    llm_orchestrator: LLMOrchestrator = Depends(get_llm_orchestrator),
 ) -> GeneralAnalysisService:
     """Provide the general analysis service with its dependencies."""
     return GeneralAnalysisService(
@@ -168,4 +185,6 @@ def get_general_analysis_service(
         prompt_service=prompt_service,
         storage_provider=storage_provider,
         llm_service=llm_service_instance,
+        file_processor=file_processor,
+        llm_orchestrator=llm_orchestrator,
     )
