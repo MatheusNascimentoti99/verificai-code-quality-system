@@ -38,10 +38,10 @@ async def create_general_analysis(
     request: GeneralAnalysisRequest,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    service: GeneralAnalysisService = Depends(get_general_analysis_service)
 ) -> Any:
     """Create a general analysis with custom criteria"""
-    service = GeneralAnalysisService(db)
     analysis = service.create_general_analysis(request, current_user)
 
     # Start background processing
@@ -53,11 +53,11 @@ async def create_general_analysis(
 @router.get("/criteria")
 async def get_user_criteria(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    service: GeneralAnalysisService = Depends(get_general_analysis_service)
 ) -> Any:
     """Get shared criteria from all users"""
     try:
-        service = GeneralAnalysisService(db)
         all_criteria = service.get_user_criteria()
 
         seen_texts = set()
@@ -83,10 +83,10 @@ async def get_user_criteria(
 async def create_criteria(
     request: CriterionCreate,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    service: GeneralAnalysisService = Depends(get_general_analysis_service)
 ) -> Any:
     """Create a new criterion"""
-    service = GeneralAnalysisService(db)
     new_criterion = service.create_criterion(current_user.id, request.text)
 
     return GeneralCriteriaResponse(
@@ -101,10 +101,10 @@ async def update_criteria(
     criteria_id: str,
     request: CriterionCreate,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    service: GeneralAnalysisService = Depends(get_general_analysis_service)
 ) -> Any:
     """Update an existing criterion"""
-    service = GeneralAnalysisService(db)
     criterion = service.update_criterion(criteria_id, request.text)
 
     return GeneralCriteriaResponse(
@@ -118,10 +118,10 @@ async def update_criteria(
 async def delete_criteria(
     criteria_id: str,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    service: GeneralAnalysisService = Depends(get_general_analysis_service)
 ) -> Any:
     """Delete a criterion"""
-    service = GeneralAnalysisService(db)
     service.delete_criterion(criteria_id)
 
     return {"message": "Criterion deleted successfully"}
@@ -281,12 +281,12 @@ async def debug_test(
 @router.get("/latest-code-entry")
 async def get_latest_code_entry(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    service: GeneralAnalysisService = Depends(get_general_analysis_service)
 ) -> Any:
     """Get the latest code entry from the current user"""
     try:
         print(f"DEBUG: Getting latest code entry for user {current_user.id}")
-        service = GeneralAnalysisService(db)
         latest_entry = service.get_latest_code_entry(current_user.id)
 
         if not latest_entry:
@@ -329,10 +329,9 @@ async def get_latest_code_entry(
 async def get_general_analysis_result(
     analysis_id: int,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    service: GeneralAnalysisService = Depends(get_general_analysis_service)
 ) -> Any:
     """Get general analysis result"""
-    service = GeneralAnalysisService(db)
     payload = service.get_general_analysis_result(analysis_id, current_user)
     return GeneralAnalysisResultResponse(**payload)
 
@@ -340,12 +339,12 @@ async def get_general_analysis_result(
 @router.post("/get-latest-code-entry")
 async def get_latest_code_entry_post(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    service: GeneralAnalysisService = Depends(get_general_analysis_service)
 ) -> Any:
     """Get the latest code entry from the current user using POST method"""
     try:
         print(f"DEBUG: Getting latest code entry for user {current_user.id}")
-        service = GeneralAnalysisService(db)
         latest_entry = service.get_latest_code_entry(current_user.id)
 
         if not latest_entry:
@@ -402,11 +401,11 @@ async def analyze_selected_criteria(
 @router.get("/results")
 async def get_analysis_results(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    service: GeneralAnalysisService = Depends(get_general_analysis_service)
 ) -> Any:
     """Get all analysis results for the current user"""
     try:
-        service = GeneralAnalysisService(db)
         return service.get_analysis_results_payload(current_user)
 
     except Exception as e:
@@ -613,11 +612,11 @@ async def get_analysis_results_public(
 async def get_analysis_result(
     result_id: int,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    service: GeneralAnalysisService = Depends(get_general_analysis_service)
 ) -> Any:
     """Get a specific analysis result by ID"""
     try:
-        service = GeneralAnalysisService(db)
         return service.get_analysis_result_payload(result_id, current_user)
 
     except HTTPException:
@@ -637,7 +636,8 @@ async def update_manual_result(
     analysis_id: int,
     result_data: dict,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    service: GeneralAnalysisService = Depends(get_general_analysis_service)
 ) -> Any:
     """Update analysis result manually"""
     analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()
@@ -681,8 +681,9 @@ async def update_manual_result(
     db.commit()
     db.refresh(analysis)
 
-    # Return updated result
-    return await get_general_analysis_result(analysis_id, current_user, db)
+    # Return updated result using the service
+    payload = service.get_general_analysis_result(analysis_id, current_user)
+    return GeneralAnalysisResultResponse(**payload)
 
 
 
