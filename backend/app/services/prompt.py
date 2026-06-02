@@ -1,349 +1,319 @@
 """
-Prompt service for VerificAI Backend
+Prompt service for VerificAI Backend - Handles prompt manipulation and criteria insertion
 """
 
-from typing import List, Optional, Dict, Any
-from datetime import datetime
+from typing import List, Dict, Any
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, desc
-
-from app.models.prompt import Prompt, PromptCategory, PromptStatus
-from app.models.user import User
-from app.core.exceptions import (
-    NotFoundError, ValidationError, BusinessRuleError,
-    DuplicateResourceError
-)
-
+from app.models.prompt import PromptConfiguration
+from app.models.prompt import GeneralCriteria
 
 class PromptService:
-    """Service for prompt management operations"""
+    """Service for handling prompt operations"""
 
     def __init__(self, db: Session):
         self.db = db
 
-    def create_prompt(self, user_id: int, prompt_data: Dict[str, Any]) -> Prompt:
-        """Create a new prompt"""
-        # Validate prompt data
-        self._validate_prompt_data(prompt_data)
+    def get_general_prompt(self, prompt_id: int = None) -> str:
+        """Get the general prompt configuration from database"""
+        try:
+            if prompt_id:
+                # Get specific prompt by ID
+                prompt_config = self.db.query(PromptConfiguration).filter(
+                    PromptConfiguration.id == prompt_id,
+                    PromptConfiguration.is_active == True
+                ).first()
+            else:
+                # Get the most recent general prompt configuration
+                prompt_config = self.db.query(PromptConfiguration).filter(
+                    PromptConfiguration.prompt_type == "general",
+                    PromptConfiguration.is_active == True
+                ).order_by(PromptConfiguration.updated_at.desc()).first()
 
-        # Create prompt
-        prompt = Prompt(
-            **prompt_data,
-            author_id=user_id
-        )
+            if prompt_config:
+                return prompt_config.content
+            else:
+                # Return default prompt if no configuration found
+                return self._get_default_general_prompt()
 
-        self.db.add(prompt)
-        self.db.commit()
-        self.db.refresh(prompt)
+        except Exception as e:
+            print(f"Error getting general prompt: {e}")
+            return self._get_default_general_prompt()
 
-        return prompt
-
-    def get_prompt_by_id(self, prompt_id: int) -> Optional[Prompt]:
-        """Get prompt by ID"""
-        return self.db.query(Prompt).filter(Prompt.id == prompt_id).first()
-
-    def get_prompts(
-        self,
-        user_id: Optional[int] = None,
-        skip: int = 0,
-        limit: int = 100,
-        filters: Optional[Dict[str, Any]] = None,
-        search: Optional[str] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = "desc"
-    ) -> List[Prompt]:
-        """Get prompts with filtering, sorting, and pagination"""
-        query = self.db.query(Prompt)
-
-        # Apply visibility filter
-        if user_id:
-            # Users can see their own prompts + public prompts
-            query = query.filter(
-                or_(
-                    Prompt.author_id == user_id,
-                    Prompt.is_public == True
-                )
-            )
-
-        # Apply filters
-        if filters:
-            if filters.get('category'):
-                query = query.filter(Prompt.category == filters['category'])
-            if filters.get('status'):
-                query = query.filter(Prompt.status == filters['status'])
-            if filters.get('is_public') is not None:
-                query = query.filter(Prompt.is_public == filters['is_public'])
-            if filters.get('is_featured') is not None:
-                query = query.filter(Prompt.is_featured == filters['is_featured'])
-            if filters.get('author_id'):
-                query = query.filter(Prompt.author_id == filters['author_id'])
-            if filters.get('supported_language'):
-                # Simple contains check - in production, use JSON operations
-                query = query.filter(Prompt.supported_languages.contains(filters['supported_language']))
-            if filters.get('supported_file_type'):
-                query = query.filter(Prompt.supported_file_types.contains(filters['supported_file_type']))
-
-        # Apply search
-        if search:
-            query = query.filter(
-                or_(
-                    Prompt.name.contains(search),
-                    Prompt.description.contains(search)
-                )
-            )
-
-        # Apply sorting
-        if sort_by:
-            sort_column = getattr(Prompt, sort_by, None)
-            if sort_column:
-                if sort_order == "desc":
-                    query = query.order_by(desc(sort_column))
+    def get_selected_criteria(self, criteria_ids: List[str]) -> List[GeneralCriteria]:
+        """Get selected criteria from database"""
+        try:
+            # Extract actual IDs from criteria_ids (format: "criteria_123")
+            actual_ids = []
+            for criteria_id in criteria_ids:
+                if criteria_id.startswith("criteria_"):
+                    actual_ids.append(int(criteria_id.replace("criteria_", "")))
                 else:
-                    query = query.order_by(sort_column)
+                    try:
+                        actual_ids.append(int(criteria_id))
+                    except ValueError:
+                        continue
+
+            # Get criteria from database
+            criteria = self.db.query(GeneralCriteria).filter(
+                GeneralCriteria.id.in_(actual_ids),
+                GeneralCriteria.is_active == True
+            ).order_by(GeneralCriteria.order).all()
+
+            return criteria
+
+        except Exception as e:
+            print(f"Error getting selected criteria: {e}")
+            return []
+
+    def insert_criteria_into_prompt(self, prompt: str, criteria: List[GeneralCriteria]) -> str:
+        """Insert criteria into prompt at the # delimiter and update the structure example"""
+        try:
+            # Format criteria for insertion with clear headers
+            criteria_text = ""
+            for i, criterion in enumerate(criteria, 1):
+                criteria_text += f"## Critério {i}: {criterion.text}\n\n"
+                criteria_text += f"Avalie este critério especificamente usando o nome exato: \"{criterion.text}\"\n\n"
+                criteria_text += "---\n\n"
+
+            # Look for [INSERIR_CRITÉRIOS_AQUI] delimiter in prompt
+            if "[INSERIR_CRITÉRIOS_AQUI]" in prompt:
+                # Replace the placeholder with formatted criteria
+                modified_prompt = prompt.replace("[INSERIR_CRITÉRIOS_AQUI]", criteria_text.strip())
+            else:
+                # If no placeholder found, append criteria to the end
+                modified_prompt = prompt + f"\n\nCritérios a serem avaliados:\n{criteria_text}"
+
+            # Now update the structure example to match the actual number of criteria
+            if len(criteria) == 1:
+                # For single criteria, remove the duplicate "Critério 2" example
+                modified_prompt = self._adjust_prompt_for_single_criteria(modified_prompt, criteria[0].text)
+            elif len(criteria) > 1:
+                # For multiple criteria, ensure the example shows the correct count
+                modified_prompt = self._adjust_prompt_for_multiple_criteria(modified_prompt, len(criteria))
+
+            return modified_prompt
+
+        except Exception as e:
+            print(f"Error inserting criteria into prompt: {e}")
+            return prompt  # Return original prompt if error occurs
+
+    def _adjust_prompt_for_single_criteria(self, prompt: str, criteria_text: str) -> str:
+        """Adjust prompt structure to show only one criteria example with the actual criteria name"""
+        import re
+
+        print(f"=== ADJUSTING PROMPT FOR SINGLE CRITERIA ===")
+        print(f"Original prompt contains 'Critério 2': {'Critério 2' in prompt}")
+        print(f"Number of '## Critério' in original: {prompt.count('## Critério')}")
+        print(f"Criteria text: {criteria_text}")
+
+        # Remove completely the multi-criteria example structure and replace with single-criteria structure
+        # Find the format section and replace it entirely
+        format_section_pattern = r'Formate sua resposta em markdown com a seguinte estrutura exata:.*?(?=#FIM#|$)'
+
+        single_criteria_format = f"""Formate sua resposta em markdown com a seguinte estrutura exata:
+
+## Avaliação Geral
+[Resumo geral da análise]
+
+## Critério: {criteria_text}
+**Status:** [Conforme/Parcialmente Conforme/Não Conforme]
+**Confiança:** [X.X]%
+
+[Avaliação detalhada com evidências do código]
+
+**Recomendações:**
+- [Lista de recomendações específicas]
+
+**IMPORTANTE: Ao finalizar a análise deste critério, inclua EXATAMENTE a tag: #FIM_ANALISE_CRITERIO#**
+Esta tag marca o fim completo da análise do critério acima.
+
+#FIM_ANALISE_CRITERIO#
+
+## Recomendações Gerais
+[Lista de recomendações gerais]
+
+#FIM#"""
+
+        modified_prompt = re.sub(format_section_pattern, single_criteria_format, prompt, flags=re.DOTALL)
+
+        print(f"After replacing format section:")
+        print(f"Contains 'Critério 2': {'Critério 2' in modified_prompt}")
+        print(f"Number of '## Critério' in modified: {modified_prompt.count('## Critério')}")
+        print(f"Number of '## Critério:' (with colon): {modified_prompt.count('## Critério:')}")
+
+        # Also clean up any remaining multiple criteria references that might exist
+        modified_prompt = re.sub(r'## Critério \d+:', '## Critério:', modified_prompt)
+
+        # Add explicit instruction for single criteria analysis with the exact criteria name
+        instruction_text = f"""
+CRÍTICO: Esta análise deve conter APENAS UM critério de avaliação.
+- NÃO crie múltiplos critérios
+- NÃO invente critérios adicionais
+- Use OBRIGATORIAMENTE o cabeçalho exato: "## Critério 1: {criteria_text}"
+- A numeração é OBRIGATÓRIA para o processamento correto da análise
+- NÃO modifique o nome do critério: use exatamente "{criteria_text}"
+- Avalie exclusivamente o critério fornecido acima
+- O título do critério na resposta DEVE ser idêntico ao fornecido
+
+"""
+
+        # Insert the instruction before the code analysis section
+        code_analysis_marker = "## CÓDIGO FONTE PARA ANÁLISE:"
+        if code_analysis_marker in modified_prompt:
+            modified_prompt = modified_prompt.replace(
+                code_analysis_marker,
+                instruction_text + code_analysis_marker
+            )
+
+        print(f"=== FINAL PROMPT STATS ===")
+        print(f"Final prompt length: {len(modified_prompt)}")
+        print(f"Final '## Critério' count: {modified_prompt.count('## Critério')}")
+        print(f"Final '## Critério:' count: {modified_prompt.count('## Critério:')}")
+        print(f"=== END ADJUSTMENT ===")
+
+        return modified_prompt
+
+    def _adjust_prompt_for_multiple_criteria(self, prompt: str, count: int) -> str:
+        """Adjust prompt structure to show the correct number of criteria examples"""
+        import re
+
+        if count >= 2:
+            # First, insert the instruction before the code analysis section
+            instruction_text = f"""
+CRÍTICO: Esta análise deve conter exatamente {count} critérios de avaliação.
+- Use exatamente os nomes dos critérios fornecidos acima
+- NÃO modifique os nomes dos critérios
+- NÃO invente critérios adicionais
+- CADA critério DEVE usar o cabeçalho com numeração: "## Critério 1: [Nome exato do critério]", "## Critério 2: [Nome exato do critério]", etc.
+- A numeração é OBRIGATÓRIA para o processamento correto da análise
+
+"""
+
+            code_analysis_marker = "## CÓDIGO FONTE PARA ANÁLISE:"
+            if code_analysis_marker in prompt:
+                prompt = prompt.replace(
+                    code_analysis_marker,
+                    instruction_text + code_analysis_marker
+                )
+
+            # Then, generate the correct number of criteria examples in the template
+            criteria_examples = ""
+            for i in range(1, count + 1):
+                criteria_examples += f"""
+## Critério {i}: [Nome do critério]
+**Status:** [Conforme/Parcialmente Conforme/Não Conforme]
+**Confiança:** [X.X]%
+
+[Avaliação detalhada com evidências do código]
+
+**Recomendações:**
+- [Lista de recomendações específicas]
+
+**IMPORTANTE: Ao finalizar a análise deste critério, inclua EXATAMENTE a tag: #FIM_ANALISE_CRITERIO#**
+Esta tag marca o fim completo da análise do critério acima.
+
+#FIM_ANALISE_CRITERIO#
+
+"""
+
+            # Replace the entire format section with the correct number of examples
+            format_section_pattern = r'Formate sua resposta em markdown com a seguinte estrutura exata:.*?(?=## Recomendações Gerais|#FIM#|$)'
+
+            new_format_section = f"""Formate sua resposta em markdown com a seguinte estrutura exata:
+
+## Avaliação Geral
+[Resumo geral da análise]
+
+{criteria_examples}## Recomendações Gerais
+[Lista de recomendações gerais]"""
+
+            modified_prompt = re.sub(format_section_pattern, new_format_section, prompt, flags=re.DOTALL)
+
+            return modified_prompt
         else:
-            query = query.order_by(desc(Prompt.created_at))
+            # This shouldn't happen as this method is only called for count > 1
+            return prompt
 
-        return query.offset(skip).limit(limit).all()
+    def _get_default_general_prompt(self) -> str:
+        """Get default general prompt"""
+        return """
+Você é um especialista em análise de código.
 
-    def update_prompt(self, prompt_id: int, user_id: int, prompt_data: Dict[str, Any]) -> Prompt:
-        """Update prompt"""
-        prompt = self.get_prompt_by_id(prompt_id)
-        if not prompt:
-            raise NotFoundError("Prompt", str(prompt_id))
+**INSTRUÇÃO CRÍTICA - OBRIGATÓRIO:**
+Para cada critério de avaliação, você DEVE incluir EXATAMENTE a tag #FIM_ANALISE_CRITERIO# ao final da análise completa do critério.
+Esta tag é ESSENCIAL para garantir que a análise completa seja capturada pelo sistema.
+NÃO trunc suas respostas - forneça análises detalhadas e completas.
 
-        # Check permissions
-        if prompt.author_id != user_id:
-            raise BusinessRuleError("You can only update your own prompts")
+### CRITÉRIOS PARA ANÁLISE:
+[INSERIR_CRITÉRIOS_AQUI]
 
-        # Validate prompt data
-        self._validate_prompt_data(prompt_data, is_update=True)
+### CÓDIGO FONTE PARA ANÁLISE:
+```typescript
+[INSERIR CÓDIGO AQUI]
+```
 
-        # Update fields
-        for field, value in prompt_data.items():
-            if hasattr(prompt, field):
-                setattr(prompt, field, value)
+**IMPORTANTE:** O código acima pode conter múltiplos arquivos. Cada arquivo está claramente identificado com cabeçalhos no formato:
+```
+============================================================
+ARQUIVO: [nome_do_arquivo]
+TAMANHO: [X] caracteres
+TIPO: [EXTENSÃO]
+============================================================
+```
 
-        self.db.commit()
-        self.db.refresh(prompt)
+Analise TODOS os arquivos de código acima como um conjunto integrado, considerando as interações entre eles, com base nos seguintes critérios:
 
-        return prompt
+#
 
-    def delete_prompt(self, prompt_id: int, user_id: int) -> bool:
-        """Delete prompt"""
-        prompt = self.get_prompt_by_id(prompt_id)
-        if not prompt:
-            raise NotFoundError("Prompt", str(prompt_id))
+Para cada critério, forneça:
+1. Uma avaliação clara sobre se o código atende ao critério
+2. Nível de confiança (0.0-1.0)
+3. Evidências específicas do código
+4. Recomendações para melhoria, se aplicável
 
-        # Check permissions
-        if prompt.author_id != user_id:
-            raise BusinessRuleError("You can only delete your own prompts")
+Forneça sua análise em um formato estruturado que inclua:
+- Avaliação geral
+- Avaliações individuais dos critérios
+- Exemplos de código que apoiam suas conclusões
+- Recomendações acionáveis
 
-        self.db.delete(prompt)
-        self.db.commit()
+Formate sua resposta em markdown com a seguinte estrutura exata:
 
-        return True
+## Avaliação Geral
+[Resumo geral da análise]
 
-    def test_prompt(self, prompt_id: int, user_id: int, test_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Test prompt with sample code"""
-        prompt = self.get_prompt_by_id(prompt_id)
-        if not prompt:
-            raise NotFoundError("Prompt", str(prompt_id))
+## Critério 1: [Nome do critério]
+**Status:** [Conforme/Parcialmente Conforme/Não Conforme]
+**Confiança:** [X.X]%
 
-        # Check permissions
-        if not prompt.is_public and prompt.author_id != user_id:
-            raise BusinessRuleError("Access denied")
+[Avaliação detalhada com evidências do código]
 
-        # TODO: Implement actual prompt testing logic
-        # This is a placeholder implementation
-        return {
-            "success": True,
-            "response": "Test response - this is a placeholder",
-            "tokens_used": 100,
-            "processing_time": 2.5,
-            "cost_estimate": 0.01
-        }
+**Recomendações:**
+- [Lista de recomendações específicas]
 
-    def clone_prompt(self, prompt_id: int, user_id: int, clone_data: Dict[str, Any]) -> Prompt:
-        """Clone prompt"""
-        original_prompt = self.get_prompt_by_id(prompt_id)
-        if not original_prompt:
-            raise NotFoundError("Prompt", str(prompt_id))
+## Critério 2: [Nome do critério]
+**Status:** [Conforme/Parcialmente Conforme/Não Conforme]
+**Confiança:** [X.X]%
 
-        # Check permissions
-        if not original_prompt.is_public and original_prompt.author_id != user_id:
-            raise BusinessRuleError("Access denied")
+[Avaliação detalhada com evidências do código]
 
-        # Create clone
-        clone = Prompt(
-            name=clone_data.get('new_name', f"{original_prompt.name} (Clone)"),
-            description=clone_data.get('new_description', original_prompt.description),
-            category=original_prompt.category,
-            system_prompt=original_prompt.system_prompt,
-            user_prompt_template=original_prompt.user_prompt_template,
-            output_format_instructions=original_prompt.output_format_instructions,
-            temperature=original_prompt.temperature,
-            max_tokens=original_prompt.max_tokens,
-            model_name=original_prompt.model_name,
-            tags=original_prompt.tags,
-            supported_languages=original_prompt.supported_languages,
-            supported_file_types=original_prompt.supported_file_types,
-            author_id=user_id
-        )
+**Recomendações:**
+- [Lista de recomendações específicas]
 
-        self.db.add(clone)
-        self.db.commit()
-        self.db.refresh(clone)
+**IMPORTANTE: Ao finalizar a análise deste critério, inclua EXATAMENTE a tag: #FIM_ANALISE_CRITERIO#**
+Esta tag marca o fim completo da análise do critério acima.
 
-        return clone
+#FIM_ANALISE_CRITERIO#
 
-    def validate_prompt(self, prompt_id: int, user_id: int) -> Dict[str, Any]:
-        """Validate prompt"""
-        prompt = self.get_prompt_by_id(prompt_id)
-        if not prompt:
-            raise NotFoundError("Prompt", str(prompt_id))
+## Recomendações Gerais
+[Lista de recomendações gerais]
 
-        # Check permissions
-        if prompt.author_id != user_id:
-            raise BusinessRuleError("Access denied")
+IMPORTANTE: Ao finalizar sua análise, inclua exatamente a tag #FIM# para indicar que a resposta está completa.
 
-        # TODO: Implement actual validation logic
-        # This is a placeholder implementation
-        return {
-            "is_valid": True,
-            "errors": [],
-            "warnings": ["This is a placeholder validation"],
-            "suggestions": ["Consider adding more specific tags"]
-        }
+#FIM#
+"""
 
-    def publish_prompt(self, prompt_id: int, user_id: int) -> Prompt:
-        """Publish prompt (make public)"""
-        prompt = self.get_prompt_by_id(prompt_id)
-        if not prompt:
-            raise NotFoundError("Prompt", str(prompt_id))
-
-        # Check permissions
-        if prompt.author_id != user_id:
-            raise BusinessRuleError("Access denied")
-
-        prompt.is_public = True
-        prompt.status = PromptStatus.ACTIVE
-        self.db.commit()
-        self.db.refresh(prompt)
-
-        return prompt
-
-    def unpublish_prompt(self, prompt_id: int, user_id: int) -> Prompt:
-        """Unpublish prompt (make private)"""
-        prompt = self.get_prompt_by_id(prompt_id)
-        if not prompt:
-            raise NotFoundError("Prompt", str(prompt_id))
-
-        # Check permissions
-        if prompt.author_id != user_id:
-            raise BusinessRuleError("Access denied")
-
-        prompt.is_public = False
-        self.db.commit()
-        self.db.refresh(prompt)
-
-        return prompt
-
-    def get_prompt_stats(self, user_id: Optional[int] = None) -> Dict[str, Any]:
-        """Get prompt statistics"""
-        query = self.db.query(Prompt)
-
-        if user_id:
-            query = query.filter(Prompt.author_id == user_id)
-
-        total_prompts = query.count()
-        active_prompts = query.filter(Prompt.status == PromptStatus.ACTIVE).count()
-        public_prompts = query.filter(Prompt.is_public == True).count()
-
-        # Prompts by category
-        prompts_by_category = {}
-        for category in PromptCategory:
-            count = query.filter(Prompt.category == category).count()
-            prompts_by_category[category.value] = count
-
-        # Prompts by status
-        prompts_by_status = {}
-        for status in PromptStatus:
-            count = query.filter(Prompt.status == status).count()
-            prompts_by_status[status.value] = count
-
-        # Total usage
-        total_usage = sum([p.usage_count for p in query.all()])
-
-        return {
-            "total_prompts": total_prompts,
-            "active_prompts": active_prompts,
-            "public_prompts": public_prompts,
-            "prompts_by_category": prompts_by_category,
-            "prompts_by_status": prompts_by_status,
-            "total_usage": total_usage
-        }
-
-    def increment_usage(self, prompt_id: int, success: bool = True) -> None:
-        """Increment prompt usage count"""
-        prompt = self.get_prompt_by_id(prompt_id)
-        if prompt:
-            prompt.increment_usage()
-            if success:
-                prompt.update_success_rate(True)
-            self.db.commit()
-
-    def get_featured_prompts(self, limit: int = 10) -> List[Prompt]:
-        """Get featured prompts"""
-        return self.db.query(Prompt)\
-            .filter(Prompt.is_featured == True)\
-            .filter(Prompt.status == PromptStatus.ACTIVE)\
-            .filter(Prompt.is_public == True)\
-            .order_by(desc(Prompt.usage_count))\
-            .limit(limit)\
-            .all()
-
-    def search_prompts_by_language(self, language: str, limit: int = 20) -> List[Prompt]:
-        """Search prompts that support a specific language"""
-        return self.db.query(Prompt)\
-            .filter(Prompt.supported_languages.contains(language))\
-            .filter(Prompt.status == PromptStatus.ACTIVE)\
-            .filter(Prompt.is_public == True)\
-            .order_by(desc(Prompt.usage_count))\
-            .limit(limit)\
-            .all()
-
-    def get_user_prompts(self, user_id: int, skip: int = 0, limit: int = 100) -> List[Prompt]:
-        """Get prompts created by a specific user"""
-        return self.db.query(Prompt)\
-            .filter(Prompt.author_id == user_id)\
-            .order_by(desc(Prompt.created_at))\
-            .offset(skip)\
-            .limit(limit)\
-            .all()
-
-    def _validate_prompt_data(self, data: Dict[str, Any], is_update: bool = False) -> None:
-        """Validate prompt data"""
-        required_fields = ['name', 'category', 'system_prompt', 'user_prompt_template']
-
-        if not is_update:
-            for field in required_fields:
-                if field not in data or not data[field]:
-                    raise ValidationError(f"Field '{field}' is required")
-
-        # Validate temperature range
-        if 'temperature' in data:
-            temp = data['temperature']
-            if not (0.0 <= temp <= 2.0):
-                raise ValidationError("Temperature must be between 0.0 and 2.0")
-
-        # Validate max_tokens
-        if 'max_tokens' in data:
-            tokens = data['max_tokens']
-            if not (1 <= tokens <= 100000):
-                raise ValidationError("Max tokens must be between 1 and 100000")
-
-        # Validate model name
-        if 'model_name' in data:
-            valid_models = ['gpt-4', 'gpt-4-turbo-preview', 'gpt-3.5-turbo']
-            if data['model_name'] not in valid_models:
-                raise ValidationError(f"Invalid model name. Valid models: {valid_models}")
+# Global instance function
+def get_prompt_service(db: Session) -> PromptService:
+    """Get prompt service instance"""
+    return PromptService(db)

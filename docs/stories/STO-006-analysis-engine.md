@@ -56,7 +56,7 @@ class AnalysisOrchestrator:
     def __init__(self):
         self.queue = AnalysisQueue()
         self.llm_provider = LLMProvider()
-        self.file_processor = FileProcessor()
+        self.file_processor = FileProcessorService()
         self.result_aggregator = ResultAggregator()
 
     async def start_analysis(self, analysis_config: AnalysisConfig) -> AnalysisJob:
@@ -105,7 +105,7 @@ class LLMProvider:
 #### 3. File Processing System
 ```python
 # services/file_processor.py
-class FileProcessor:
+class FileProcessorService:
     def __init__(self):
         self.language_detector = LanguageDetector()
         self.code_parser = CodeParser()
