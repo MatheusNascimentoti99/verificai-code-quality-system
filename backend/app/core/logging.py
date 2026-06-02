@@ -66,8 +66,6 @@ def setup_logging() -> None:
     """Setup logging configuration"""
 
     # Create logs directory if it doesn't exist
-    log_dir = Path("logs")
-    log_dir.mkdir(exist_ok=True)
 
     # Configure logging
     log_config = {
@@ -91,25 +89,7 @@ def setup_logging() -> None:
                 "level": settings.LOG_LEVEL,
                 "formatter": "colored" if settings.LOG_FORMAT == "colored" else "standard",
                 "stream": sys.stdout
-            },
-            # "file": {
-            #     "class": "logging.handlers.RotatingFileHandler",
-            #     "level": settings.LOG_LEVEL,
-            #     "formatter": "json" if settings.LOG_FORMAT == "json" else "standard",
-            #     "filename": log_dir / "app.log",
-            #     "maxBytes": 10485760,  # 10MB
-            #     "backupCount": 5,
-            #     "encoding": "utf8"
-            # },
-            # "error_file": {
-            #     "class": "logging.handlers.RotatingFileHandler",
-            #     "level": "ERROR",
-            #     "formatter": "json" if settings.LOG_FORMAT == "json" else "standard",
-            #     "filename": log_dir / "error.log",
-            #     "maxBytes": 10485760,  # 10MB
-            #     "backupCount": 5,
-            #     "encoding": "utf8"
-            # }
+            }
         },
         "loggers": {
             "": {  # root logger
@@ -139,7 +119,20 @@ def setup_logging() -> None:
             }
         }
     }
-
+    
+        #check environment variable to disable file logging in production
+    if settings.ENVIRONMENT == "development":
+        log_dir = Path("logs")
+        log_dir.mkdir(exist_ok=True)
+        log_config["handlers"]["file"] = {
+            "class": "logging.handlers.RotatingFileHandler",
+            "level": settings.LOG_LEVEL,
+            "formatter": "json" if settings.LOG_FORMAT == "json" else "standard",
+            "filename": log_dir / "app.log",
+            "maxBytes": 10485760,  # 10MB
+            "backupCount": 5,
+            "encoding": "utf8"
+        }
     logging.config.dictConfig(log_config)
 
 
