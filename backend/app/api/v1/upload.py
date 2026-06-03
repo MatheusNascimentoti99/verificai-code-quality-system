@@ -23,7 +23,7 @@ from app.schemas.upload import (
     FileStatsResponse, UploadValidationResponse, ValidationError
 )
 from app.core.logging import app_logger as logger
-from app.services.storage_provider import get_storage_provider
+from app.providers.storage import get_storage_provider
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 

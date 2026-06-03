@@ -14,7 +14,7 @@ from app.models.user import User
 from app.services.general_analysis import GeneralAnalysisService
 from app.services.llm_service import llm_service
 from app.services.prompt import PromptService, get_prompt_service as build_prompt_service
-from app.services.storage_provider import StorageProvider, get_storage_provider as build_storage_provider
+from app.providers.storage import StorageProvider, get_storage_provider as build_storage_provider
 from app.services.file_processor import FileProcessorService
 from app.services.llm_orchestrator import LLMOrchestrator
 

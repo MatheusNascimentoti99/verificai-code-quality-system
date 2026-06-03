@@ -12,7 +12,7 @@ from sqlalchemy import create_engine
 from app.core.database import get_db
 from app.models.file_path import FilePath
 from app.models.uploaded_file import UploadedFile
-from app.services.storage_provider import get_storage_provider
+from app.providers.storage import get_storage_provider
 
 def cleanup_invalid_paths():
     """Remove file paths que não correspondem a arquivos reais"""

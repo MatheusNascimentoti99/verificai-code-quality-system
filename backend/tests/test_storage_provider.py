@@ -1,20 +1,20 @@
 import pytest
 
-from app.providers.filesystem import FileSystemStorageProvider
+from app.providers.storage import FileSystemStorageProvider
 from app.providers.minio import MinioStorageProvider
 
 
 @pytest.fixture(autouse=True)
 def reset_storage_settings(monkeypatch, tmp_path):
-    monkeypatch.setattr("app.services.storage_provider.settings.STORAGE_PROVIDER", "local")
-    monkeypatch.setattr("app.services.storage_provider.settings.UPLOAD_DIR", str(tmp_path))
-    monkeypatch.setattr("app.services.storage_provider.settings.BLOB_ACCESS", "private")
-    monkeypatch.setattr("app.services.storage_provider.settings.BLOB_READ_WRITE_TOKEN", None)
-    monkeypatch.setattr("app.services.storage_provider.settings.MINIO_ENDPOINT", None)
-    monkeypatch.setattr("app.services.storage_provider.settings.MINIO_BUCKET", "verificai")
-    monkeypatch.setattr("app.services.storage_provider.settings.MINIO_ACCESS_KEY", None)
-    monkeypatch.setattr("app.services.storage_provider.settings.MINIO_SECRET_KEY", None)
-    monkeypatch.setattr("app.services.storage_provider.settings.MINIO_SECURE", False)
+    monkeypatch.setattr("app.providers.storage.settings.STORAGE_PROVIDER", "local")
+    monkeypatch.setattr("app.providers.storage.settings.UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr("app.providers.storage.settings.BLOB_ACCESS", "private")
+    monkeypatch.setattr("app.providers.storage.settings.BLOB_READ_WRITE_TOKEN", None)
+    monkeypatch.setattr("app.providers.storage.settings.MINIO_ENDPOINT", None)
+    monkeypatch.setattr("app.providers.storage.settings.MINIO_BUCKET", "verificai")
+    monkeypatch.setattr("app.providers.storage.settings.MINIO_ACCESS_KEY", None)
+    monkeypatch.setattr("app.providers.storage.settings.MINIO_SECRET_KEY", None)
+    monkeypatch.setattr("app.providers.storage.settings.MINIO_SECURE", False)
 
 
 @pytest.mark.asyncio
@@ -39,11 +39,11 @@ async def test_local_storage_provider_roundtrip(tmp_path):
 
 
 def test_auto_prefers_minio_when_configured(monkeypatch):
-    monkeypatch.setattr("app.services.storage_provider.settings.STORAGE_PROVIDER", "auto")
-    monkeypatch.setattr("app.services.storage_provider.settings.MINIO_ENDPOINT", "localhost:9000")
-    monkeypatch.setattr("app.services.storage_provider.settings.MINIO_BUCKET", "verificai")
-    monkeypatch.setattr("app.services.storage_provider.settings.MINIO_ACCESS_KEY", "minioadmin")
-    monkeypatch.setattr("app.services.storage_provider.settings.MINIO_SECRET_KEY", "minioadmin")
+    monkeypatch.setattr("app.providers.storage.settings.STORAGE_PROVIDER", "auto")
+    monkeypatch.setattr("app.providers.storage.settings.MINIO_ENDPOINT", "localhost:9000")
+    monkeypatch.setattr("app.providers.storage.settings.MINIO_BUCKET", "verificai")
+    monkeypatch.setattr("app.providers.storage.settings.MINIO_ACCESS_KEY", "minioadmin")
+    monkeypatch.setattr("app.providers.storage.settings.MINIO_SECRET_KEY", "minioadmin")
 
     provider = MinioStorageProvider()
 
@@ -51,7 +51,7 @@ def test_auto_prefers_minio_when_configured(monkeypatch):
 
 
 def test_minio_provider_requires_credentials(monkeypatch):
-    monkeypatch.setattr("app.services.storage_provider.settings.STORAGE_PROVIDER", "minio")
+    monkeypatch.setattr("app.providers.storage.settings.STORAGE_PROVIDER", "minio")
 
     with pytest.raises(RuntimeError, match="requires MINIO_ENDPOINT"):
         MinioStorageProvider()

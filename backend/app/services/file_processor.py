@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.code_entry import CodeEntry
 from app.models.uploaded_file import UploadedFile, FileStatus
-from app.providers.base import StorageProvider
+from app.providers.storage import StorageProvider
 
 
 logger = logging.getLogger(__name__)

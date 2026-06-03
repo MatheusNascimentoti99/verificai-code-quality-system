@@ -24,7 +24,7 @@ from app.schemas.llm import StructuredAnalysisOutput
 from app.services.analysis import AnalysisService
 from app.services.llm_service import LLMService
 from app.services.prompt import PromptService
-from app.providers.base import StorageProvider
+from app.providers.storage import StorageProvider
 from app.services.file_processor import FileProcessorService
 from app.services.llm_orchestrator import LLMOrchestrator
 
