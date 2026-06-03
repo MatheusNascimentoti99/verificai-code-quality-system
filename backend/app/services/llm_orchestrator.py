@@ -57,7 +57,14 @@ class LLMOrchestrator:
         criteria_ids: List[str],
     ) -> dict:
         # Reuse the extraction logic from the previous implementation
+        # Remove ``` json and ``` if present    
+        if llm_response_content.startswith("```"):
+            llm_response_content = llm_response_content[len("```json"):].strip()
+        if llm_response_content.endswith("```"):
+            llm_response_content = llm_response_content[:-len("```")].strip()
         structured_response = json.loads(llm_response_content)
+        
+        
         if structured_response.get("criteria_results"):
             criteria_results = {}
             for item in structured_response.get("criteria_results", []):
