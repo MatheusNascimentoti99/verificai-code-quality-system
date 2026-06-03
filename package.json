@@ -46,6 +46,7 @@
   "author": "mformiga",
   "license": "MIT",
   "devDependencies": {
+    "@playwright/mcp": "^0.0.75",
     "concurrently": "^8.2.0",
     "prettier": "^3.0.0"
   },
