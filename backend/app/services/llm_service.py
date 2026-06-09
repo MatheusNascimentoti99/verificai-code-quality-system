@@ -51,11 +51,7 @@ class LLMService:
 
         # BLOQUEO GLOBAL
         async with self._global_lock:
-            try:
-                return await self._execute_llm_request(prompt, **kwargs)
-            except Exception as e:
-                print(f"Error in LLMService: {str(e)}")
-                raise
+            return await self._execute_llm_request(prompt, **kwargs)
 
     async def _execute_llm_request(self, prompt: str, **kwargs) -> "LLMResponse":
         """Execute the actual LLM request with fallback logic"""
