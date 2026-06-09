@@ -166,9 +166,9 @@ def get_file_processor(
     return FileProcessorService(db=db, storage_provider=storage_provider)
 
 
-def get_llm_orchestrator(llm_service_instance = Depends(get_llm_service)) -> LLMOrchestrator:
+def get_llm_orchestrator(storage_provider: StorageProvider = Depends(get_storage_provider), llm_service_instance = Depends(get_llm_service)) -> LLMOrchestrator:
     """Provide an LLMOrchestrator instance."""
-    return LLMOrchestrator(llm_service=llm_service_instance)
+    return LLMOrchestrator(llm_service=llm_service_instance, storage_provider=storage_provider)
 
 
 def get_general_analysis_service(

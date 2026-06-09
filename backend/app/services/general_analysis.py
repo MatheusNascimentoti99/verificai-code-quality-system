@@ -6,8 +6,7 @@ import json
 import os
 import time
 from datetime import datetime
-from pathlib import Path
-from typing import List, Any, Optional
+from typing import List, Optional
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -20,7 +19,6 @@ from app.models.uploaded_file import UploadedFile, FileStatus
 from app.models.user import User
 from app.schemas.analysis import AnalysisCreate
 from app.schemas.general_analysis import AnalyzeSelectedRequest
-from app.schemas.llm import StructuredAnalysisOutput
 from app.services.analysis import AnalysisService
 from app.services.llm_service import LLMService
 from app.services.prompt import PromptService
@@ -427,40 +425,45 @@ class GeneralAnalysisService:
             CodeEntry.is_active == True,  # noqa: E712
         ).order_by(CodeEntry.created_at.desc()).first()
 
-    def _save_latest_prompt(self, final_prompt: str, request_data: AnalyzeSelectedRequest, current_user: User, total_files_processed: int) -> None:
+    async def _save_latest_prompt(self, final_prompt: str, request_data: AnalyzeSelectedRequest, current_user: User, total_files_processed: int) -> None:
         """Persist the final prompt for debugging."""
         try:
-            prompts_dir = Path(__file__).parent.parent.parent.parent / "prompts"
-            prompts_dir.mkdir(exist_ok=True)
-            latest_prompt_path = prompts_dir / "latest_prompt.txt"
-
-            with open(latest_prompt_path, "w", encoding="utf-8") as f:
-                f.write("=" * 80 + "\n")
-                f.write(f"LTIMO PROMPT ENVIADO PARA LLM - {datetime.now().isoformat()}\n")
-                f.write("=" * 80 + "\n\n")
-                f.write(f"TAMANHO TOTAL: {len(final_prompt)} caracteres\n")
-                f.write(f"ARQUIVOS PROCESSADOS: {total_files_processed}\n")
-                f.write(f"CRITRIOS: {len(request_data.criteria_ids)}\n")
-                f.write(f"USURIO: {current_user.username} (ID: {current_user.id})\n\n")
-                f.write("=" * 80 + "\n")
-                f.write("CONTEDO COMPLETO DO PROMPT:\n")
-                f.write("=" * 80 + "\n\n")
-                f.write(final_prompt)
-                f.write("\n\n" + "=" * 80 + "\n")
-                f.write("FIM DO PROMPT\n")
-                f.write("=" * 80 + "\n")
+            content = '\n'.join([f"Último prompt para análise geral - {datetime.now().isoformat()}",
+                            f"Usuário: {current_user.username} (ID: {current_user.id})",
+                            f"Análise: {request_data.analysis_name}",
+                            f"Critérios: {', '.join(request_data.criteria_ids)}",
+                            f"Arquivos processados: {total_files_processed}",
+                            f"Tamanho do prompt: {len(final_prompt)} caracteres",
+                            "\nConteúdo do prompt:\n",
+                            final_prompt])
+            filename = f"latest_general_analysis_prompt_{current_user.id}.txt"
+            await self.storage_provider.upload_bytes(
+                user_id=current_user.id,
+                file_id=f"general_analysis_{int(time.time())}",
+                original_name=filename,
+                relative_path=filename,
+                content=content.encode('utf-8'),
+                content_type="text/plain",
+            )
         except Exception as save_error:
             print(f"DEBUG: Erro ao salvar prompt em arquivo: {save_error}")
 
-    def _save_latest_response(self, llm_response_content: str) -> None:
+    async def _save_latest_response(self, llm_response_content: str) -> None:
         """Persist the raw LLM response for debugging."""
         try:
-            prompts_dir = Path(__file__).parent.parent.parent.parent / "prompts"
-            prompts_dir.mkdir(exist_ok=True)
-            latest_response_path = prompts_dir / "latest_response.txt"
-
-            with open(latest_response_path, "w", encoding="utf-8") as f:
-                f.write(llm_response_content)
+            content = '\n'.join([f"Última resposta da LLM - {datetime.now().isoformat()}",
+                            f"Tamanho da resposta: {len(llm_response_content)} caracteres",
+                            "\nConteúdo da resposta:\n",
+                            llm_response_content])
+            filename = f"latest_general_analysis_response.txt"
+            await self.storage_provider.upload_bytes(
+                user_id=0,
+                file_id=f"general_analysis_response_{int(time.time())}",
+                original_name=filename,
+                relative_path=filename,
+                content=content.encode('utf-8'),
+                content_type="text/plain",
+            )
         except Exception as save_error:
             print(f"DEBUG: Erro ao salvar resposta em arquivo: {save_error}")
 
