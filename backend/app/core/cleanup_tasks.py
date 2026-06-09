@@ -2,7 +2,7 @@ import logging
 from sqlalchemy.orm import Session
 from app.models.file_path import FilePath
 from app.models.uploaded_file import UploadedFile
-from app.services.storage_provider import get_storage_provider
+from app.providers.storage import get_storage_provider
 
 logger = logging.getLogger(__name__)
 

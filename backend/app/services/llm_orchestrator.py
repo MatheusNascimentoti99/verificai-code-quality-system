@@ -2,51 +2,51 @@
 LLM orchestration: save prompts/responses, call LLM and extract structured results.
 """
 import json
+import time
 from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, List
 
 from app.schemas.llm import StructuredAnalysisOutput
 from app.models.prompt import GeneralCriteria
 from app.services.llm_service import LLMService
-
+from app.providers.storage import StorageProvider
 
 class LLMOrchestrator:
-    def __init__(self, llm_service: Optional[LLMService] = None):
+    def __init__(self, llm_service: LLMService, storage_provider: StorageProvider):
         self.llm_service = llm_service
+        self.storage_provider = storage_provider
 
-    def _save_latest_prompt(self, final_prompt: str, request_data: Any, current_user: Any, total_files_processed: int) -> None:
+    async def _save_latest_prompt(self, final_prompt: str, request_data: Any, current_user: Any, total_files_processed: int) -> None:
         try:
-            prompts_dir = Path(__file__).parent.parent.parent.parent / "prompts"
-            prompts_dir.mkdir(exist_ok=True)
-            latest_prompt_path = prompts_dir / "latest_prompt.txt"
-
-            with open(latest_prompt_path, "w", encoding="utf-8") as f:
-                f.write("=" * 80 + "\n")
-                f.write(f"LTIMO PROMPT ENVIADO PARA LLM - {datetime.now().isoformat()}\n")
-                f.write("=" * 80 + "\n\n")
-                f.write(f"TAMANHO TOTAL: {len(final_prompt)} caracteres\n")
-                f.write(f"ARQUIVOS PROCESSADOS: {total_files_processed}\n")
-                f.write(f"CRITRIOS: {len(request_data.criteria_ids)}\n")
-                f.write(f"USURIO: {current_user.username} (ID: {current_user.id})\n\n")
-                f.write("=" * 80 + "\n")
-                f.write("CONTEDO COMPLETO DO PROMPT:\n")
-                f.write("=" * 80 + "\n\n")
-                f.write(final_prompt)
-                f.write("\n\n" + "=" * 80 + "\n")
-                f.write("FIM DO PROMPT\n")
-                f.write("=" * 80 + "\n")
+            content = '\n'.join([f"Último prompt para análise geral - {datetime.now().isoformat()}",
+                            f"Usuário: {current_user.username} (ID: {current_user.id})",
+                            f"Análise: {getattr(request_data, 'analysis_name', 'N/A')}",
+                            f"Arquivos processados: {total_files_processed}",
+                            "\nConteúdo do prompt:\n",
+                            final_prompt])
+            filename = f"latest_general_analysis_prompt_{current_user.id}.txt"
+            if self.storage_provider:
+                await self.storage_provider.upload_bytes(
+                    user_id=current_user.id,
+                    file_id=f"general_analysis_{int(time.time())}",
+                    original_name=filename,
+                    relative_path=None,
+                    content=content.encode('utf-8'),
+                    content_type="text/plain",
+                )
         except Exception as save_error:
             print(f"DEBUG: Erro ao salvar prompt em arquivo: {save_error}")
 
-    def _save_latest_response(self, llm_response_content: str) -> None:
+    async def _save_latest_response(self, llm_response_content: str, current_user: Any) -> None:
         try:
-            prompts_dir = Path(__file__).parent.parent.parent.parent / "prompts"
-            prompts_dir.mkdir(exist_ok=True)
-            latest_response_path = prompts_dir / "latest_response.txt"
-
-            with open(latest_response_path, "w", encoding="utf-8") as f:
-                f.write(llm_response_content)
+            await self.storage_provider.upload_bytes(
+                user_id=current_user.id,
+                file_id=f"general_analysis_response_{int(time.time())}",
+                original_name=f"latest_general_analysis_response_{int(time.time())}.txt",
+                relative_path=None,
+                content=llm_response_content.encode('utf-8'),
+                content_type="text/plain",
+            )
         except Exception as save_error:
             print(f"DEBUG: Erro ao salvar resposta em arquivo: {save_error}")
 
@@ -107,7 +107,7 @@ class LLMOrchestrator:
         if not self.llm_service:
             raise RuntimeError("LLM service dependency not provided")
 
-        self._save_latest_prompt(final_prompt, request_data, current_user, total_files_processed)
+        await self._save_latest_prompt(final_prompt, request_data, current_user, total_files_processed)
 
         forced_max_tokens = 32000
 
@@ -118,8 +118,9 @@ class LLMOrchestrator:
                 max_tokens=forced_max_tokens,
                 response_model=StructuredAnalysisOutput,
             )
-            self._save_latest_response(llm_response.get("response", llm_response.get("text", "")))
+            self._save_latest_response(llm_response.get("response", llm_response.get("text", "")), current_user)
         except Exception as llm_error:
+            await self._save_latest_response(f"Error during LLM call: {str(llm_error)}", current_user)
             import traceback
             traceback.print_exc()
             raise

@@ -6,13 +6,10 @@ from typing import Optional
 
 from app.core.config import settings
 from app.core.logging import app_logger as logger
-from app.providers import (
-    FileSystemStorageProvider,
-    MinioStorageProvider,
-    StorageProvider,
-    StoredFileInfo,
-    VercelBlobStorageProvider,
-)
+from app.providers.storage.filesystem import FileSystemStorageProvider
+from app.providers.storage.minio import MinioStorageProvider
+from app.providers.storage.vercel_blob import VercelBlobStorageProvider
+from app.providers.storage.base import StorageProvider
 
 
 def _resolve_provider_name(configured_provider: str) -> str:
@@ -57,13 +54,3 @@ def get_storage_provider() -> StorageProvider:
     if _storage_provider is None:
         _storage_provider = _build_storage_provider()
     return _storage_provider
-
-
-__all__ = [
-    "StoredFileInfo",
-    "StorageProvider",
-    "FileSystemStorageProvider",
-    "VercelBlobStorageProvider",
-    "MinioStorageProvider",
-    "get_storage_provider",
-]
