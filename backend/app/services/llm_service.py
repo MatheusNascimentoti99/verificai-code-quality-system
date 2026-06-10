@@ -9,9 +9,13 @@ import httpx
 import asyncio
 import time
 import datetime
+import logging
 from typing import Dict, List, Any, Optional, Type
 from fastapi import HTTPException, status
 from pydantic import BaseModel, ValidationError
+from app.schemas.llm import BaseResponseModel
+
+logger = logging.getLogger(__name__)
 
 # Use relative import for robustness
 try:
@@ -60,8 +64,6 @@ class LLMService:
         temperature = kwargs.get("temperature", 0.7)
         response_model = kwargs.get("response_model")
 
-        prompt_with_schema = self._build_structured_prompt(prompt, response_model)
-
         if self.provider == "openrouter":
             headers = {
                 "Authorization": f"Bearer {self.api_key}",
@@ -71,15 +73,24 @@ class LLMService:
             }
             payload = {
                 "model": self.primary_model,
-                "messages": [{"role": "user", "content": prompt_with_schema}],
+                "messages": [{"role": "user", "content": self._build_structured_prompt(prompt, response_model)}],
                 "max_tokens": max_output_tokens,
-                "temperature": temperature
+                "temperature": temperature,
+                "response_format": response_model.get_response_schema(),
+                "structured_outputs": True
             }
         else:
             headers = {"Content-Type": "application/json"}
             payload = {
-                "contents": [{"role": "user", "parts": [{"text": prompt_with_schema}]}],
-                "generationConfig": {"maxOutputTokens": max_output_tokens, "temperature": temperature},
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "maxOutputTokens": max_output_tokens,
+                    "temperature": temperature,
+                    **({
+                        "_responseJsonSchema": response_model.get_response_schema(),
+                        "responseMimeType": "application/json"
+                    } if response_model else {})
+                },
                 "safetySettings": [
                     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
                     {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
