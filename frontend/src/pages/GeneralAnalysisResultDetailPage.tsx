@@ -34,6 +34,7 @@ interface AnalysisDetail {
   project_name?: string;
   timestamp: string;
   model_used?: string;
+  file_paths?: string[];
   criteria_results: Record<string, { name: string; content: string }>;
 }
 
@@ -102,6 +103,45 @@ function formatAssessmentHTML(text: string): string {
   return out;
 }
 
+function buildTreeText(paths: string[]): string {
+  if (!paths || paths.length === 0) return 'Nenhum arquivo';
+
+  const sortedPaths = [...paths].sort();
+  const root: any = {};
+
+  for (const path of sortedPaths) {
+    // Normalize path separators and ignore empty parts
+    const parts = path.replace(/\\/g, '/').split('/').filter(Boolean);
+    let current = root;
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      if (!current[part]) {
+        current[part] = i === parts.length - 1 ? null : {};
+      }
+      if (current[part] !== null) {
+        current = current[part];
+      }
+    }
+  }
+
+  function printTree(node: any, prefix: string = ''): string {
+    if (!node) return '';
+    let result = '';
+    const keys = Object.keys(node);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      const isLast = i === keys.length - 1;
+      result += prefix + (isLast ? '└── ' : '├── ') + key + '\n';
+      if (node[key] !== null) {
+        result += printTree(node[key], prefix + (isLast ? '    ' : '│   '));
+      }
+    }
+    return result;
+  }
+
+  return printTree(root).trim();
+}
+
 /* ── Component ── */
 const GeneralAnalysisResultDetailPage: React.FC = () => {
   const { resultId } = useParams<{ resultId: string }>();
@@ -110,6 +150,7 @@ const GeneralAnalysisResultDetailPage: React.FC = () => {
   const [analysis, setAnalysis] = useState<AnalysisDetail | null>(null);
   const [criteria, setCriteria] = useState<CriterionResult[]>([]);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [isTreeExpanded, setIsTreeExpanded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reanalyzingKey, setReanalyzingKey] = useState<string | null>(null);
@@ -419,6 +460,42 @@ const GeneralAnalysisResultDetailPage: React.FC = () => {
                 <div className="summary-stat-label">Não Conforme</div>
               </div>
             </div>
+
+            {/* Analyzed Files Tree */}
+            {analysis.file_paths && analysis.file_paths.length > 0 && (
+              <div style={{ marginTop: '20px', background: '#f8f9fa', borderRadius: '8px', border: '1px solid #dee2e6', overflow: 'hidden' }}>
+                <div
+                  onClick={() => setIsTreeExpanded(!isTreeExpanded)}
+                  style={{
+                    padding: '16px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    userSelect: 'none'
+                  }}
+                >
+                  <h4 style={{ margin: 0, fontSize: '14px', color: '#495057', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <FolderOpen size={16} /> Arquivos Analisados ({analysis.file_paths.length})
+                  </h4>
+                  <ChevronDown
+                    size={20}
+                    style={{
+                      color: '#6c757d',
+                      transition: 'transform 0.2s',
+                      transform: isTreeExpanded ? 'rotate(180deg)' : 'rotate(0deg)'
+                    }}
+                  />
+                </div>
+                {isTreeExpanded && (
+                  <div style={{ padding: '0 16px 16px 16px' }}>
+                    <pre style={{ margin: 0, padding: '12px', background: '#ffffff', border: '1px solid #e9ecef', borderRadius: '6px', fontSize: '13px', color: '#212529', overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                      {buildTreeText(analysis.file_paths)}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
