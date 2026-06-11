@@ -5,6 +5,8 @@ import LoginPage from '@/pages/LoginPage';
 import PromptConfigPage from '@/pages/PromptConfigPage';
 import CodeUploadPage from '@/pages/CodeUploadPage';
 import GeneralAnalysisPage from '@/pages/GeneralAnalysisPage';
+import GeneralAnalysisResultsPage from '@/pages/GeneralAnalysisResultsPage';
+import GeneralAnalysisResultDetailPage from '@/pages/GeneralAnalysisResultDetailPage';
 import ArchitecturalAnalysisPage from '@/pages/ArchitecturalAnalysisPage';
 import BusinessAnalysisPage from '@/pages/BusinessAnalysisPage';
 import './pages/DashboardPage.css';
@@ -201,6 +203,16 @@ function App() {
       <Route path="/code-upload" element={
         <ProtectedRoute>
           <CodeUploadPage />
+        </ProtectedRoute>
+      } />
+      <Route path="/general-analysis/results/:resultId" element={
+        <ProtectedRoute>
+          <GeneralAnalysisResultDetailPage />
+        </ProtectedRoute>
+      } />
+      <Route path="/general-analysis/results" element={
+        <ProtectedRoute>
+          <GeneralAnalysisResultsPage />
         </ProtectedRoute>
       } />
       <Route path="/general-analysis" element={

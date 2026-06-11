@@ -38,9 +38,7 @@ class LLMService:
         else:
             self.base_url = "https://generativelanguage.googleapis.com/v1beta/models"
             self.primary_model = settings.MODEL if "gemini" in settings.MODEL else "gemini-1.5-flash"
-            
-        self.fallback_model = "gemini-1.5-pro" if self.provider == "gemini" else "anthropic/claude-3-haiku"
-        
+                    
         # Lock global para serializar completamente todas as solicitações LLM
         self._global_lock = asyncio.Lock()
         
@@ -107,16 +105,6 @@ class LLMService:
 
         if primary_result:
             return self._process_successful_response(primary_result["result"], primary_result["model"], response_model)
-        
-        # Try fallback
-        fallback_model = self.fallback_model
-        if self.provider == "openrouter":
-            payload["model"] = fallback_model
-        
-        fallback_result = await self._try_model(prompt, fallback_model, headers, payload, max_retries, base_delay)
-
-        if fallback_result:
-            return self._process_successful_response(fallback_result["result"], fallback_result["model"], response_model)
         
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

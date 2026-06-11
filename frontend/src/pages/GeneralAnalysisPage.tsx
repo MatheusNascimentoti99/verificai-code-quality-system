@@ -1,10 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Download, Upload, Settings, FileText, AlertCircle, Trash2, RefreshCw, Eye, FolderOpen, ArrowRight } from 'lucide-react';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
-import { Routes, Route, Navigate, Link } from 'react-router-dom';
-import { useAuthStore } from '@/stores/authStore';
-import apiClient, { isLocalBackend } from '@/services/apiClient';
+import { Upload, Settings, FileText, AlertCircle, Eye, ArrowRight, ExternalLink } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
 import CriteriaList from '@/components/features/Analysis/CriteriaList';
 import ProgressTracker from '@/components/features/Analysis/ProgressTracker';
 import ResultsTable from '@/components/features/Analysis/ResultsTable';
@@ -46,6 +42,7 @@ interface Criterion {
 }
 
 const GeneralAnalysisPage: React.FC = () => {
+  const navigate = useNavigate();
   const uploadStore = useUploadStore();
 
   // Definir título da página
@@ -1726,11 +1723,34 @@ const GeneralAnalysisPage: React.FC = () => {
         )}
 
         {activeTab === 'results' && (
-          <ResultsTable
-            results={results}
-            onDownloadDocx={handleDownloadDocx}
-            onDeleteResults={handleDeleteResults}
-          />
+          <>
+            {/* Link to full results history */}
+            <div className="br-card mb-4">
+              <div className="card-content" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 24px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div>
+                    <h3 className="br-text-base">Histórico de Análises</h3>
+                    <p>Visualize todos os resultados, exporte relatórios detalhados e compare análises anteriores</p>
+                  </div>
+                </div>
+                <Link
+                  to="/general-analysis/results"
+                  className="br-button primary"
+                  style={{ whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <ExternalLink size={16} />
+                  Ver Histórico Completo
+                </Link>
+              </div>
+            </div>
+
+            {/* Inline results for current session */}
+            <ResultsTable
+              results={results}
+              onDownloadDocx={handleDownloadDocx}
+              onDeleteResults={handleDeleteResults}
+            />
+          </>
         )}
 
         {activeTab === 'prompt' && (

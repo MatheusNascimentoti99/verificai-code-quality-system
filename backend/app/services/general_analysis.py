@@ -325,10 +325,11 @@ class GeneralAnalysisService:
                 "timestamp": result.created_at,
                 "model_used": result.model_used,
                 "processing_time": result.processing_time,
+                "usage": result.get_usage(),
                 "file_paths": result.get_file_paths(),
                 "criteria_results": result.get_criteria_results(),
                 "raw_response": result.raw_response,
-                "usage": result.get_usage(),
+
             })
 
         return {
