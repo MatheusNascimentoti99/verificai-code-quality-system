@@ -1,10 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Download, Upload, Settings, FileText, AlertCircle, Trash2, RefreshCw, Eye, FolderOpen, ArrowRight } from 'lucide-react';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
-import { Routes, Route, Navigate, Link } from 'react-router-dom';
-import { useAuthStore } from '@/stores/authStore';
-import apiClient, { isLocalBackend } from '@/services/apiClient';
+import { Upload, Settings, FileText, AlertCircle, Eye, ArrowRight, ExternalLink } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
 import CriteriaList from '@/components/features/Analysis/CriteriaList';
 import ProgressTracker from '@/components/features/Analysis/ProgressTracker';
 import ResultsTable from '@/components/features/Analysis/ResultsTable';
@@ -46,6 +42,7 @@ interface Criterion {
 }
 
 const GeneralAnalysisPage: React.FC = () => {
+  const navigate = useNavigate();
   const uploadStore = useUploadStore();
 
   // Definir título da página
@@ -64,6 +61,7 @@ const GeneralAnalysisPage: React.FC = () => {
     reloadDbPaths();
   }, [uploadStore]);
 
+  const [projectName, setProjectName] = useState<string>('');
   const uploadedFiles = uploadStore?.files || [];
   const [dbFilePaths, setDbFilePaths] = useState<string[]>([]);
 
@@ -216,90 +214,94 @@ const GeneralAnalysisPage: React.FC = () => {
           const mostRecentResult = savedResults.results[0]; // Já vem ordenado por timestamp decrescente
           console.log('📊 Usando apenas a análise mais recente:', mostRecentResult.analysis_name);
 
+          if (mostRecentResult.project_name) {
+            setProjectName(mostRecentResult.project_name);
+          }
+
           // Converter resultado salvo para o formato esperado pelo componente
           const formattedResults: CriteriaResult[] = [];
 
           if (mostRecentResult.criteria_results && typeof mostRecentResult.criteria_results === 'object') {
             Object.entries(mostRecentResult.criteria_results).forEach(([key, criterionData]: [string, any]) => {
-                if (criterionData && criterionData.content) {
-                  // Extrair confiança do conteúdo
-                  let confidence = 0.8;
-                  const confidenceMatch = criterionData.content.match(/(confiança|confidence)[^\d]*(\d+(?:\.\d+)?)/i);
-                  if (confidenceMatch) {
-                    const confidenceValue = parseFloat(confidenceMatch[2]);
-                    confidence = confidenceValue > 1.0 ? Math.min(confidenceValue / 100, 1.0) : Math.min(confidenceValue, 1.0);
-                  }
-
-                  // Extrair status do conteúdo usando formato estruturado
-                  let status: 'compliant' | 'partially_compliant' | 'non_compliant' = 'compliant';
-                  const statusMatch = criterionData.content.match(/\*\*Status:\*\*\s*([^*\n]+)/i);
-                  if (statusMatch) {
-                    const statusText = statusMatch[1].trim().toLowerCase();
-                    console.log(`[DEBUG] Status extracted: "${statusText}" from criterion: ${criterionData.name}`);
-
-                    // Check for "não conforme" first (most specific)
-                    if (statusText === 'não conforme' || statusText === 'nao conforme' || statusText.startsWith('não conforme') || statusText.startsWith('nao conforme')) {
-                      status = 'non_compliant';
-                    } else if (statusText === 'parcialmente conforme' || statusText.startsWith('parcialmente conforme')) {
-                      status = 'partially_compliant';
-                    } else if (statusText === 'conforme' || statusText.startsWith('conforme')) {
-                      status = 'compliant';
-                    } else {
-                      // Fallback: check for contains (less precise)
-                      if (statusText.includes('não conforme') || statusText.includes('nao conforme')) {
-                        status = 'non_compliant';
-                      } else if (statusText.includes('parcialmente conforme')) {
-                        status = 'partially_compliant';
-                      } else if (statusText.includes('conforme') && !statusText.includes('não') && !statusText.includes('nao')) {
-                        status = 'compliant';
-                      }
-                    }
-                    console.log(`[DEBUG] Status mapped to: ${status} for criterion: ${criterionData.name}`);
-                  } else {
-                    // Fallback para busca por palavra-chave se formato estruturado não for encontrado
-                    const content = criterionData.content.toLowerCase();
-                    console.log(`[DEBUG] No structured status found, using content search for criterion: ${criterionData.name}`);
-
-                    if (content.includes('não atende') || content.includes('não cumpre') || content.includes('viol') || content.includes('defeito')) {
-                      status = 'non_compliant';
-                    } else if (content.includes('parcialmente') || content.includes('atende parcialmente') || content.includes('precisa melhorar')) {
-                      status = 'partially_compliant';
-                    }
-                    console.log(`[DEBUG] Fallback status mapped to: ${status} for criterion: ${criterionData.name}`);
-                  }
-
-                  // Tentar encontrar o ID numérico do critério
-                  const criterionNameFromDB = criterionData.name || `Critério ${key}`;
-                  const criteriaId = criteriaTextToIdMap.get(criterionNameFromDB) ||
-                                   criteriaTextToIdMap.get(criterionNameFromDB.split(':')[0].trim());
-
-                  // Encontrar o critério correspondente para obter o texto original
-                  const matchingCriterion = allCriteria.find(c => c.id === criteriaId);
-
-                  // SEMPRE usar o texto original do critério se encontrado, senão usar o do banco
-                  const finalCriterionText = matchingCriterion ? matchingCriterion.text : criterionNameFromDB;
-
-                  if (!criteriaId) {
-                    console.log(`⚠️ Critério não encontrado no mapa: "${criterionNameFromDB}"`);
-                  }
-
-                  if (matchingCriterion) {
-                    console.log(`✅ Critério encontrado no mapa: "${criterionNameFromDB}" -> "${matchingCriterion.text}"`);
-                  }
-
-                  formattedResults.push({
-                    id: criteriaId || (mostRecentResult.id * 1000 + parseInt(key.replace(/\D/g, ''))), // Usar criteriaId como ID principal
-                    criterion: finalCriterionText, // Usar texto original do critério quando disponível
-                    assessment: criterionData.content,
-                    status: status,
-                    confidence: confidence,
-                    evidence: [],
-                    recommendations: [],
-                    resultId: mostRecentResult.id, // Adicionar referência ao ID do resultado pai no banco
-                    criterionKey: key, // Adicionar a chave do critério original
-                    criteriaId: criteriaId // Adicionar o ID numérico único do critério
-                  });
+              if (criterionData && criterionData.content) {
+                // Extrair confiança do conteúdo
+                let confidence = 0.8;
+                const confidenceMatch = criterionData.content.match(/(confiança|confidence)[^\d]*(\d+(?:\.\d+)?)/i);
+                if (confidenceMatch) {
+                  const confidenceValue = parseFloat(confidenceMatch[2]);
+                  confidence = confidenceValue > 1.0 ? Math.min(confidenceValue / 100, 1.0) : Math.min(confidenceValue, 1.0);
                 }
+
+                // Extrair status do conteúdo usando formato estruturado
+                let status: 'compliant' | 'partially_compliant' | 'non_compliant' = 'compliant';
+                const statusMatch = criterionData.content.match(/\*\*Status:\*\*\s*([^*\n]+)/i);
+                if (statusMatch) {
+                  const statusText = statusMatch[1].trim().toLowerCase();
+                  console.log(`[DEBUG] Status extracted: "${statusText}" from criterion: ${criterionData.name}`);
+
+                  // Check for "não conforme" first (most specific)
+                  if (statusText === 'não conforme' || statusText === 'nao conforme' || statusText.startsWith('não conforme') || statusText.startsWith('nao conforme')) {
+                    status = 'non_compliant';
+                  } else if (statusText === 'parcialmente conforme' || statusText.startsWith('parcialmente conforme')) {
+                    status = 'partially_compliant';
+                  } else if (statusText === 'conforme' || statusText.startsWith('conforme')) {
+                    status = 'compliant';
+                  } else {
+                    // Fallback: check for contains (less precise)
+                    if (statusText.includes('não conforme') || statusText.includes('nao conforme')) {
+                      status = 'non_compliant';
+                    } else if (statusText.includes('parcialmente conforme')) {
+                      status = 'partially_compliant';
+                    } else if (statusText.includes('conforme') && !statusText.includes('não') && !statusText.includes('nao')) {
+                      status = 'compliant';
+                    }
+                  }
+                  console.log(`[DEBUG] Status mapped to: ${status} for criterion: ${criterionData.name}`);
+                } else {
+                  // Fallback para busca por palavra-chave se formato estruturado não for encontrado
+                  const content = criterionData.content.toLowerCase();
+                  console.log(`[DEBUG] No structured status found, using content search for criterion: ${criterionData.name}`);
+
+                  if (content.includes('não atende') || content.includes('não cumpre') || content.includes('viol') || content.includes('defeito')) {
+                    status = 'non_compliant';
+                  } else if (content.includes('parcialmente') || content.includes('atende parcialmente') || content.includes('precisa melhorar')) {
+                    status = 'partially_compliant';
+                  }
+                  console.log(`[DEBUG] Fallback status mapped to: ${status} for criterion: ${criterionData.name}`);
+                }
+
+                // Tentar encontrar o ID numérico do critério
+                const criterionNameFromDB = criterionData.name || `Critério ${key}`;
+                const criteriaId = criteriaTextToIdMap.get(criterionNameFromDB) ||
+                  criteriaTextToIdMap.get(criterionNameFromDB.split(':')[0].trim());
+
+                // Encontrar o critério correspondente para obter o texto original
+                const matchingCriterion = allCriteria.find(c => c.id === criteriaId);
+
+                // SEMPRE usar o texto original do critério se encontrado, senão usar o do banco
+                const finalCriterionText = matchingCriterion ? matchingCriterion.text : criterionNameFromDB;
+
+                if (!criteriaId) {
+                  console.log(`⚠️ Critério não encontrado no mapa: "${criterionNameFromDB}"`);
+                }
+
+                if (matchingCriterion) {
+                  console.log(`✅ Critério encontrado no mapa: "${criterionNameFromDB}" -> "${matchingCriterion.text}"`);
+                }
+
+                formattedResults.push({
+                  id: criteriaId || (mostRecentResult.id * 1000 + parseInt(key.replace(/\D/g, ''))), // Usar criteriaId como ID principal
+                  criterion: finalCriterionText, // Usar texto original do critério quando disponível
+                  assessment: criterionData.content,
+                  status: status,
+                  confidence: confidence,
+                  evidence: [],
+                  recommendations: [],
+                  resultId: mostRecentResult.id, // Adicionar referência ao ID do resultado pai no banco
+                  criterionKey: key, // Adicionar a chave do critério original
+                  criteriaId: criteriaId // Adicionar o ID numérico único do critério
+                });
+              }
             });
           }
 
@@ -405,7 +407,7 @@ const GeneralAnalysisPage: React.FC = () => {
       'Variáveis devem ter nomes descritivos e significativos'
     ];
 
-    
+
     // Simulate analysis completion
     setTimeout(() => {
       clearInterval(progressInterval);
@@ -444,8 +446,8 @@ const GeneralAnalysisPage: React.FC = () => {
     }, 5000);
   };
 
-  
-  
+
+
   const handleCancelAnalysis = () => {
     setCurrentAnalysis(null);
     setResults([]);
@@ -574,15 +576,15 @@ const GeneralAnalysisPage: React.FC = () => {
         // Fallback para busca por palavra-chave se formato estruturado não for encontrado
         console.log(`[DEBUG] No structured status found, using content search`);
         if (content.toLowerCase().includes('não atende') ||
-            content.toLowerCase().includes('não cumpre') ||
-            content.toLowerCase().includes('viol') ||
-            content.toLowerCase().includes('defeito') ||
-            content.toLowerCase().includes('problema')) {
+          content.toLowerCase().includes('não cumpre') ||
+          content.toLowerCase().includes('viol') ||
+          content.toLowerCase().includes('defeito') ||
+          content.toLowerCase().includes('problema')) {
           status = 'non_compliant';
         } else if (content.toLowerCase().includes('parcialmente') ||
-                   content.toLowerCase().includes('atende parcialmente') ||
-                   content.toLowerCase().includes('precisa melhorar') ||
-                   content.toLowerCase().includes('recomenda')) {
+          content.toLowerCase().includes('atende parcialmente') ||
+          content.toLowerCase().includes('precisa melhorar') ||
+          content.toLowerCase().includes('recomenda')) {
           status = 'partially_compliant';
         }
         console.log(`[DEBUG] Fallback status mapped to: ${status}`);
@@ -611,9 +613,9 @@ const GeneralAnalysisPage: React.FC = () => {
         return prevResults.map(existingResult => {
           // Match by criteriaId or by criterion name
           if ((existingResult.criteriaId && existingResult.criteriaId === criteriaId) ||
-              (existingResult.criterion === criterion) ||
-              (existingResult.criterion.includes(criterion)) ||
-              (criterion.includes(existingResult.criterion))) {
+            (existingResult.criterion === criterion) ||
+            (existingResult.criterion.includes(criterion)) ||
+            (criterion.includes(existingResult.criterion))) {
 
             console.log(`🔄 REANÁLISE - Atualizando resultado para critério: ${criterion}`);
             console.log(`   Antigo: "${existingResult.assessment.substring(0, 50)}..."`);
@@ -769,6 +771,7 @@ const GeneralAnalysisPage: React.FC = () => {
         criteria_ids: [criteriaKey],
         file_paths: filePaths,
         analysis_name: `Análise do Critério: ${criterionObj.text}`,
+        project_name: projectName || undefined,
         temperature: 0.7,
         max_tokens: 4000
       };
@@ -826,15 +829,15 @@ const GeneralAnalysisPage: React.FC = () => {
         // Fallback para busca por palavra-chave se formato estruturado não for encontrado
         console.log(`[DEBUG] No structured status found, using content search`);
         if (content.toLowerCase().includes('não atende') ||
-            content.toLowerCase().includes('não cumpre') ||
-            content.toLowerCase().includes('viol') ||
-            content.toLowerCase().includes('defeito') ||
-            content.toLowerCase().includes('problema')) {
+          content.toLowerCase().includes('não cumpre') ||
+          content.toLowerCase().includes('viol') ||
+          content.toLowerCase().includes('defeito') ||
+          content.toLowerCase().includes('problema')) {
           status = 'non_compliant';
         } else if (content.toLowerCase().includes('parcialmente') ||
-                   content.toLowerCase().includes('atende parcialmente') ||
-                   content.toLowerCase().includes('precisa melhorar') ||
-                   content.toLowerCase().includes('recomenda')) {
+          content.toLowerCase().includes('atende parcialmente') ||
+          content.toLowerCase().includes('precisa melhorar') ||
+          content.toLowerCase().includes('recomenda')) {
           status = 'partially_compliant';
         }
         console.log(`[DEBUG] Fallback status mapped to: ${status}`);
@@ -902,7 +905,7 @@ const GeneralAnalysisPage: React.FC = () => {
       console.error('❌ Erro na análise do critério:', error);
       const errorMessage = error.message || error.response?.data?.message || 'Erro desconhecido';
       const errorDetail = error.details ? `\nDetalhes: ${JSON.stringify(error.details)}` : '';
-      
+
       console.error('Dados completos do erro:', {
         message: errorMessage,
         code: error.code,
@@ -999,6 +1002,7 @@ const GeneralAnalysisPage: React.FC = () => {
         criteria_ids: selectedCriteriaIds,
         file_paths: filePaths,
         analysis_name: 'Análise de Critérios Selecionados',
+        project_name: projectName || undefined,
         temperature: 0.7,
         max_tokens: 4000
       };
@@ -1066,15 +1070,15 @@ const GeneralAnalysisPage: React.FC = () => {
           // Fallback para busca por palavra-chave se formato estruturado não for encontrado
           console.log(`[DEBUG] No structured status found, using content search`);
           if (content.toLowerCase().includes('não atende') ||
-              content.toLowerCase().includes('não cumpre') ||
-              content.toLowerCase().includes('viol') ||
-              content.toLowerCase().includes('defeito') ||
-              content.toLowerCase().includes('problema')) {
+            content.toLowerCase().includes('não cumpre') ||
+            content.toLowerCase().includes('viol') ||
+            content.toLowerCase().includes('defeito') ||
+            content.toLowerCase().includes('problema')) {
             status = 'non_compliant';
           } else if (content.toLowerCase().includes('parcialmente') ||
-                     content.toLowerCase().includes('atende parcialmente') ||
-                     content.toLowerCase().includes('precisa melhorar') ||
-                     content.toLowerCase().includes('recomenda')) {
+            content.toLowerCase().includes('atende parcialmente') ||
+            content.toLowerCase().includes('precisa melhorar') ||
+            content.toLowerCase().includes('recomenda')) {
             status = 'partially_compliant';
           }
           console.log(`[DEBUG] Fallback status mapped to: ${status}`);
@@ -1229,8 +1233,8 @@ const GeneralAnalysisPage: React.FC = () => {
             const newText = newResult.criterion.toLowerCase().trim();
 
             return existingText === newText ||
-                   existingText.includes(newText) ||
-                   newText.includes(existingText);
+              existingText.includes(newText) ||
+              newText.includes(existingText);
           });
 
           if (alreadyExistsByText) {
@@ -1243,7 +1247,7 @@ const GeneralAnalysisPage: React.FC = () => {
 
         const existingCriteriaIds = new Set(prevResults.map(r => r.criteriaId).filter(Boolean));
         console.log(`🔍 CRITÉRIOS EXISTENTES: ${Array.from(existingCriteriaIds)}`);
-        console.log(`🔍 NOVOS CRITÉRIOS SEM MATCH: ${newCriteriaResults.map(r => ({id: r.criteriaId, name: r.criterion.substring(0, 30)}))}`);
+        console.log(`🔍 NOVOS CRITÉRIOS SEM MATCH: ${newCriteriaResults.map(r => ({ id: r.criteriaId, name: r.criterion.substring(0, 30) }))}`);
         console.log(`✅ Análise concluída: ${mergedResults.length} atualizados, ${newCriteriaResults.length} novos critérios`);
 
         return [...mergedResults, ...newCriteriaResults];
@@ -1258,7 +1262,7 @@ const GeneralAnalysisPage: React.FC = () => {
       console.error('❌ Erro na análise geral:', error);
       let errorMessage = error.message || error.response?.data?.message || 'Erro desconhecido';
       const errorDetail = error.details ? `\nDetalhes: ${JSON.stringify(error.details)}` : '';
-      
+
       // Melhora a mensagem de erro para o usuário se for falha de leitura de arquivos
       if (errorMessage.includes('Nenhum código pôde ser lido')) {
         errorMessage = `⚠️ Falha de Acesso: O servidor não conseguiu ler os arquivos para análise.\n\n` +
@@ -1331,7 +1335,7 @@ const GeneralAnalysisPage: React.FC = () => {
     }
   };
 
-  
+
   useEffect(() => {
     loadAllCriteria();
   }, []);
@@ -1433,6 +1437,7 @@ const GeneralAnalysisPage: React.FC = () => {
           <div class="header">
             <h1>Relatório de Análise de Código</h1>
             <h2>AVALIA Code Quality System</h2>
+            ${projectName ? `<h3>Projeto: ${projectName}</h3>` : ''}
             <p>Gerado em: ${currentDate} às ${currentTime}</p>
           </div>
 
@@ -1448,9 +1453,9 @@ const GeneralAnalysisPage: React.FC = () => {
     // Add results
     results.forEach((result, index) => {
       const statusClass = result.status === 'compliant' ? 'status-conforme' :
-                         result.status === 'partially_compliant' ? 'status-parcial' : 'status-nao-conforme';
+        result.status === 'partially_compliant' ? 'status-parcial' : 'status-nao-conforme';
       const statusText = result.status === 'compliant' ? 'Conforme' :
-                        result.status === 'partially_compliant' ? 'Parcialmente Conforme' : 'Não Conforme';
+        result.status === 'partially_compliant' ? 'Parcialmente Conforme' : 'Não Conforme';
 
       content += `
         <div class="result-item">
@@ -1461,15 +1466,15 @@ const GeneralAnalysisPage: React.FC = () => {
           <div>
             <h4>Avaliação</h4>
             <div style="margin: 0;">${(() => {
-              let processedText = result.assessment;
-              // Handle code blocks
-              processedText = processedText.replace(/`([^`]+)`/g, '<code style="background-color: #e9ecef; padding: 2px 4px; border-radius: 3px; font-family: monospace;">$1</code>');
-              // Handle bold text
-              processedText = processedText.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-              // Convert line breaks to <br> tags
-              processedText = processedText.replace(/\n/g, '<br>');
-              return processedText;
-            })()}</div>
+          let processedText = result.assessment;
+          // Handle code blocks
+          processedText = processedText.replace(/`([^`]+)`/g, '<code style="background-color: #e9ecef; padding: 2px 4px; border-radius: 3px; font-family: monospace;">$1</code>');
+          // Handle bold text
+          processedText = processedText.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+          // Convert line breaks to <br> tags
+          processedText = processedText.replace(/\n/g, '<br>');
+          return processedText;
+        })()}</div>
           </div>`;
 
       if (result.recommendations && result.recommendations.length > 0) {
@@ -1538,7 +1543,7 @@ const GeneralAnalysisPage: React.FC = () => {
     }
   };
 
-  
+
   return (
     <div className="general-analysis-page">
       {/* Enhanced Progress Bar */}
@@ -1625,7 +1630,19 @@ const GeneralAnalysisPage: React.FC = () => {
                   Configure seus critérios de avaliação, faça upload dos arquivos e execute análises de código baseadas em padrões de qualidade gerais
                 </p>
               </div>
-              </div>
+            </div>
+          </div>
+          <div className="card-content">
+            <label htmlFor="project_name" className="br-label">Nome do Projeto</label>
+            <input
+              id="project_name"
+              type="text"
+              placeholder="Ex: API de Pagamentos"
+              value={projectName}
+              onChange={(e) => setProjectName(e.target.value)}
+              style={{ width: '100%', maxWidth: '400px' }}
+              className="br-input"
+            />
           </div>
         </div>
       </div>
@@ -1654,7 +1671,7 @@ const GeneralAnalysisPage: React.FC = () => {
         </nav>
       </div>
 
-  
+
       {/* Tab Content */}
       <div className="br-container">
         {/* Files indexed for analysis awareness */}
@@ -1706,11 +1723,34 @@ const GeneralAnalysisPage: React.FC = () => {
         )}
 
         {activeTab === 'results' && (
-          <ResultsTable
-            results={results}
-            onDownloadDocx={handleDownloadDocx}
-            onDeleteResults={handleDeleteResults}
-          />
+          <>
+            {/* Link to full results history */}
+            <div className="br-card mb-4">
+              <div className="card-content" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 24px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div>
+                    <h3 className="br-text-base">Histórico de Análises</h3>
+                    <p>Visualize todos os resultados, exporte relatórios detalhados e compare análises anteriores</p>
+                  </div>
+                </div>
+                <Link
+                  to="/general-analysis/results"
+                  className="br-button primary"
+                  style={{ whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <ExternalLink size={16} />
+                  Ver Histórico Completo
+                </Link>
+              </div>
+            </div>
+
+            {/* Inline results for current session */}
+            <ResultsTable
+              results={results}
+              onDownloadDocx={handleDownloadDocx}
+              onDeleteResults={handleDeleteResults}
+            />
+          </>
         )}
 
         {activeTab === 'prompt' && (
@@ -1937,7 +1977,7 @@ const GeneralAnalysisPage: React.FC = () => {
         </div>
       )}
 
-      </div>
+    </div>
   );
 };
 

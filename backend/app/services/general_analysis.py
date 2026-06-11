@@ -299,6 +299,7 @@ class GeneralAnalysisService:
             "result": {
                 "id": result.id,
                 "analysis_name": result.analysis_name,
+                "project_name": result.project_name,
                 "criteria_count": result.criteria_count,
                 "timestamp": result.created_at,
                 "model_used": result.model_used,
@@ -319,14 +320,16 @@ class GeneralAnalysisService:
             formatted_results.append({
                 "id": result.id,
                 "analysis_name": result.analysis_name,
+                "project_name": result.project_name,
                 "criteria_count": result.criteria_count,
                 "timestamp": result.created_at,
                 "model_used": result.model_used,
                 "processing_time": result.processing_time,
+                "usage": result.get_usage(),
                 "file_paths": result.get_file_paths(),
                 "criteria_results": result.get_criteria_results(),
                 "raw_response": result.raw_response,
-                "usage": result.get_usage(),
+
             })
 
         return {
@@ -570,6 +573,7 @@ class GeneralAnalysisService:
 
             db_analysis_result = GeneralAnalysisResultModel(
                 analysis_name=safe_analysis_name,
+                project_name=request_data.project_name,
                 criteria_count=len(selected_criteria),
                 user_id=current_user.id,
                 criteria_results=extracted_content.get("criteria_results", {}),

@@ -25,6 +25,7 @@ class AnalyzeSelectedRequest(BaseModel):
     use_code_entry: bool = False
     code_entry_id: Optional[str] = None
     analysis_name: Optional[str] = "Análise de Critérios Gerais"
+    project_name: Optional[str] = None
     temperature: float = 0.7
     max_tokens: int = 500000
 
@@ -51,3 +52,4 @@ class GeneralAnalysisResultResponse(BaseModel):
     token_usage: Dict[str, Any]
     processing_time: float
     status: str
+    project_name: Optional[str] = None
