@@ -225,55 +225,6 @@ const GeneralAnalysisResultDetailPage: React.FC = () => {
     }
   };
 
-  /* ── Re-analyze a single criterion ── */
-  const handleReanalyze = async (cr: CriterionResult) => {
-    if (!cr.criteriaId || !analysis) return;
-    const criteriaKey = `criteria_${cr.criteriaId}`;
-    setReanalyzingKey(cr.key);
-    try {
-      // Get file paths
-      const API_BASE_URL = (import.meta as any).env.VITE_API_BASE_URL || '/api/v1';
-      let filePaths: string[] = [];
-      try {
-        const resp = await fetch(`${API_BASE_URL}/file-paths/dev-paths`);
-        if (resp.ok) {
-          const d = await resp.json();
-          filePaths = d.file_paths?.map((fp: any) => typeof fp === 'string' ? fp : fp.full_path) || [];
-        }
-      } catch { /* fallback empty */ }
-
-      if (filePaths.length === 0) {
-        alert('Nenhum arquivo encontrado para reanálise.');
-        return;
-      }
-
-      const request: AnalysisRequest = {
-        criteria_ids: [criteriaKey],
-        file_paths: filePaths,
-        analysis_name: `Reanálise: ${cr.name}`,
-        temperature: 0.7,
-        max_tokens: 4000,
-      };
-
-      const response: AnalysisResponse = await analysisService.analyzeSelectedCriteria(request);
-      const entry = Object.entries(response.criteria_results)[0];
-      if (!entry) throw new Error('Sem resultado');
-
-      const [, newVal] = entry;
-      setCriteria(prev => prev.map(c => c.key === cr.key ? {
-        ...c,
-        content: newVal.content,
-        status: parseStatus(newVal.content),
-        confidence: parseConfidence(newVal.content),
-      } : c));
-    } catch (err) {
-      console.error('Erro na reanálise:', err);
-      alert('Erro ao reanalisar o critério.');
-    } finally {
-      setReanalyzingKey(null);
-    }
-  };
-
   /* ── DOCX export — same logic as existing GeneralAnalysisPage ── */
   const handleDownloadDocx = useCallback(() => {
     if (!analysis || criteria.length === 0) { alert('Nenhum resultado para exportar.'); return; }
@@ -544,16 +495,6 @@ const GeneralAnalysisResultDetailPage: React.FC = () => {
                     className="criterion-assessment"
                     dangerouslySetInnerHTML={{ __html: formatAssessmentHTML(cr.content) }}
                   />
-                  {cr.criteriaId && (
-                    <button
-                      className="criterion-reanalyze-btn"
-                      onClick={() => handleReanalyze(cr)}
-                      disabled={reanalyzingKey === cr.key}
-                    >
-                      <RefreshCw size={14} className={reanalyzingKey === cr.key ? 'animate-spin' : ''} />
-                      {reanalyzingKey === cr.key ? 'Reanalisando...' : 'Reanalisar este Critério'}
-                    </button>
-                  )}
                 </div>
               )}
             </div>
