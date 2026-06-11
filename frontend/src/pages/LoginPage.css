@@ -8,8 +8,8 @@
   background: linear-gradient(135deg, #f8f8f8 0%, #eef4ff 100%);
 }
 
-.login-left,
-.login-right {
+.login-page__left,
+.login-page__right {
   flex: 1;
 
   display: flex;
@@ -20,15 +20,29 @@
   padding: 32px;
 }
 
-.login-left {
-  border-right: 1px solid rgba(19, 81, 180, 0.1);
+.login-page__left {
+  position: relative;
+}
+
+.login-page__left::after {
+  content: '';
+
+  position: absolute;
+
+  top: 10%;
+  bottom: 10%;
+  right: 0;
+
+  width: 1px;
+
+  background: rgba(19, 81, 180, 0.1);
 }
 
 /* ==========================================
    LOGO
 ========================================== */
 
-.logo-container {
+.login-page__logo-container {
   width: 100%;
   max-width: 500px;
 
@@ -40,7 +54,7 @@
   text-align: center;
 }
 
-.logo {
+.login-page__logo {
   width: 140px;
   height: 140px;
 
@@ -57,20 +71,20 @@
   box-shadow: 0 8px 24px rgba(19, 81, 180, 0.15);
 }
 
-.logo-text {
+.login-page__logo-text {
   color: white;
   font-size: 72px;
   font-weight: 700;
 }
 
-.app-title {
+.login-page__title {
   font-size: 3rem;
   font-weight: 700;
   color: #1351b4;
   margin-bottom: 4px;
 }
 
-.app-subtitle {
+.login-page__subtitle {
   font-size: 1rem;
   color: #555;
   max-width: 320px;
@@ -81,7 +95,7 @@
    CARD
 ========================================== */
 
-.login-form-container {
+.login-page__form-container {
   width: 100%;
   max-width: 520px;
 
@@ -90,32 +104,36 @@
   justify-content: center;
 }
 
-.br-card {
+.login-card {
   width: 100%;
   max-width: 520px;
   background: white;
   border-radius: 24px;
-  padding-left: 16px;
-  padding-right: 16px;
-  border-top: 2px solid #1351b4;
+  padding: 24px;
+
   box-shadow:
     0 12px 32px rgba(0, 0, 0, 0.08),
     0 2px 8px rgba(0, 0, 0, 0.04);
+
   color: #1351b4;
 }
-.card-header {
-  margin-bottom: 4px;
+
+.login-card__header {
   text-align: center;
+  background-color: white;
+  border-bottom: solid 1px rgba(19, 81, 180, 0.1);
+  padding-bottom: 16px;
+  margin-bottom: 24px;
 }
 
-.br-card .card-header .text-h2 {
+.login-card__title {
   font-size: 1.8rem;
   margin-bottom: 8px;
   font-weight: 600;
   color: #1351b4;
 }
 
-.text-regular {
+.login-card__description {
   color: #555555;
   line-height: 1.5;
 }
@@ -130,53 +148,53 @@
   gap: 20px;
 }
 
-.form-group {
+.login-form__group {
   display: flex;
   flex-direction: column;
 }
 
-.form-label {
+.login-form__label {
   margin-bottom: 8px;
   color: #1351b4;
   font-weight: 600;
   font-size: 0.95rem;
 }
 
-.form-input {
+.login-form__input {
   width: 100%;
   height: 56px;
   padding: 0 20px;
+
   border: 1px solid #d6d6d6;
   border-radius: 20px;
+
   font-size: 1rem;
+
   transition: all 0.2s ease;
+
   background-color: white;
 }
 
-.form-input:focus {
+.login-form__input:focus {
   outline: none;
   border-color: #1351b4;
   box-shadow: 0 0 0 4px rgba(19, 81, 180, 0.15);
 }
 
-.form-input.error {
+.login-form__input--error {
   border-color: #d32f2f;
 }
 
-.form-input::placeholder {
+.login-form__input::placeholder {
   color: #999999;
 }
 
-.form-input:disabled {
+.login-form__input:disabled {
   background: #f5f5f5;
   cursor: not-allowed;
 }
 
-/* ==========================================
-   ERROR
-========================================== */
-
-.error-message {
+.login-form__error-message {
   margin-top: 6px;
   font-size: 0.875rem;
   color: #d32f2f;
@@ -186,14 +204,18 @@
    BUTTON
 ========================================== */
 
-.login-button {
+.login-form__submit-button {
   height: 56px;
+
   border: none;
   border-radius: 20px;
+
   background: #1351b4;
   color: white;
+
   font-size: 1rem;
   font-weight: 600;
+
   cursor: pointer;
 
   display: flex;
@@ -204,11 +226,11 @@
   transition: all 0.2s ease;
 }
 
-.login-button:hover:not(:disabled) {
+.login-form__submit-button:hover:not(:disabled) {
   background: #0f3f8f;
 }
 
-.login-button:disabled {
+.login-form__submit-button:disabled {
   opacity: 0.7;
   cursor: not-allowed;
 }
@@ -217,12 +239,15 @@
    LOADING
 ========================================== */
 
-.loading-spinner {
+.login-form__spinner {
   width: 18px;
   height: 18px;
+
   border: 3px solid rgba(255, 255, 255, 0.4);
   border-top-color: white;
+
   border-radius: 50%;
+
   animation: login-spin 0.8s linear infinite;
 }
 
@@ -236,17 +261,18 @@
    LINKS
 ========================================== */
 
-.register-link {
+.login-form__register {
   text-align: center;
+  color: #555555;
 }
 
-.link {
+.login-form__register-link {
   color: #1351b4;
   font-weight: 600;
   text-decoration: none;
 }
 
-.link:hover {
+.login-form__register-link:hover {
   text-decoration: underline;
 }
 
@@ -259,51 +285,47 @@
     flex-direction: column;
   }
 
-  .login-left,
-  .login-right {
+  .login-page__left,
+  .login-page__right {
     width: 100%;
     min-height: auto;
     padding: 32px 24px;
   }
 
-  .login-left {
+  .login-page__left {
     border-right: none;
     border-bottom: 1px solid rgba(19, 81, 180, 0.1);
   }
 
-  .app-title {
+  .login-page__title {
     font-size: 2.5rem;
-  }
-
-  .br-card {
-    padding: 32px;
   }
 }
 
 @media (max-width: 480px) {
-  .app-title {
+  .login-page__title {
     font-size: 2rem;
   }
 
-  .text-h2 {
+  .login-card__title {
     font-size: 1.5rem;
   }
 
-  .logo {
+  .login-page__logo {
     width: 80px;
     height: 80px;
   }
 
-  .logo-text {
+  .login-page__logo-text {
     font-size: 36px;
   }
 }
 
 /* ==========================================
-   MODAL ERRO LOGIN
+   MODAL
 ========================================== */
 
-.login-modal-overlay {
+.login-modal {
   position: fixed;
   inset: 0;
   z-index: 99999;
@@ -317,7 +339,7 @@
   backdrop-filter: blur(2px);
 }
 
-.login-modal {
+.login-modal__container {
   width: 100%;
   max-width: 460px;
 
@@ -332,7 +354,7 @@
   animation: modalFadeIn 0.2s ease;
 }
 
-.login-modal-header {
+.login-modal__header {
   display: flex;
   align-items: center;
   gap: 16px;
@@ -342,19 +364,19 @@
   background: #1351b4;
 }
 
-.login-modal-header h3 {
+.login-modal__header h3 {
   margin: 0;
   color: white;
   font-size: 1.2rem;
 }
 
-.login-modal-header p {
+.login-modal__header p {
   margin-top: 4px;
   color: white;
   font-size: 0.9rem;
 }
 
-.login-modal-icon {
+.login-modal__icon {
   width: 36px;
   height: 36px;
 
@@ -369,20 +391,19 @@
   font-size: 1.4rem;
 }
 
-.login-modal-body {
+.login-modal__body {
   padding: 24px;
   color: #444;
   line-height: 1.5;
 }
 
-.login-modal-footer {
+.login-modal__footer {
   display: flex;
   justify-content: flex-end;
-
   padding: 0 24px 24px;
 }
 
-.login-modal-button {
+.login-modal__button {
   border: none;
 
   background: #1351b4;
@@ -398,7 +419,7 @@
   transition: background 0.2s ease;
 }
 
-.login-modal-button:hover {
+.login-modal__button:hover {
   background: #0f3f8f;
 }
 
