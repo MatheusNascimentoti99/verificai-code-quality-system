@@ -1,21 +1,18 @@
 /* DSGov-based styles for DashboardPage component */
+
 .dashboard-page {
-  padding: 24px;
+  padding: 16px;
   max-width: 1400px;
   margin: 0 auto;
   min-height: 100vh;
 }
 
-.dashboard-header {
-  margin-bottom: 32px;
-}
-
-.dashboard-header .br-card {
+.dashboard-page__header .dashboard-card {
   border: none;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
-.dashboard-header .card-header {
+.dashboard-page__header .dashboard-card__header {
   background: linear-gradient(135deg, #1351b4 0%, #1a5fc4 100%);
   color: white;
   padding: 32px 24px;
@@ -23,7 +20,7 @@
   text-align: center;
 }
 
-.dashboard-header .text-h3 {
+.dashboard-page__header .dashboard-card__title {
   color: white;
   margin-bottom: 12px;
   font-weight: 700;
@@ -31,7 +28,7 @@
   text-align: center;
 }
 
-.dashboard-header .text-regular {
+.dashboard-page__header .dashboard-card__description {
   color: rgba(255, 255, 255, 0.9);
   font-size: 16px;
   line-height: 1.5;
@@ -39,31 +36,32 @@
   margin: 0;
 }
 
-.dashboard-content .br-card {
+.dashboard-page__content .dashboard-card {
   border: none;
   border-radius: 8px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   overflow: hidden;
 }
 
-.dashboard-content .card-content {
+.dashboard-page__content .dashboard-card__content {
   padding: 32px;
 }
 
 /* Welcome section */
-.welcome-section {
+
+.dashboard-welcome {
   text-align: center;
   margin-bottom: 40px;
 }
 
-.welcome-section .text-h2 {
+.dashboard-welcome__title {
   color: #1351b4;
   margin-bottom: 16px;
   font-weight: 700;
   font-size: 2.5rem;
 }
 
-.welcome-section .text-regular {
+.dashboard-welcome__description {
   color: #6c757d;
   font-size: 18px;
   line-height: 1.6;
@@ -74,14 +72,15 @@
 }
 
 /* Features grid */
-.features-grid {
+
+.dashboard-features {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 24px;
   margin-bottom: 40px;
 }
 
-.feature-card {
+.dashboard-feature-card {
   background: white;
   border: 1px solid #e9ecef;
   border-radius: 8px;
@@ -96,7 +95,7 @@
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
 
-.feature-card:hover {
+.dashboard-feature-card:hover {
   transform: translateY(-4px);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
   border-color: #1351b4;
@@ -104,20 +103,35 @@
   color: inherit;
 }
 
-.feature-icon {
-  font-size: 48px;
-  margin-bottom: 16px;
-  display: block;
+.dashboard-feature-card__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 64px;
+  height: 64px;
+
+  margin-bottom: 12px;
+
+  border: 1.5px solid #1351b4;
+  border-radius: 12px;
+  background: #ffffff;
 }
 
-.feature-title {
+.dashboard-feature-card__icon svg {
+  width: 32px;
+  height: 32px;
+  color: #1351b4;
+}
+
+.dashboard-feature-card__title {
   font-size: 18px;
   font-weight: 600;
   color: #1351b4;
   margin-bottom: 8px;
 }
 
-.feature-description {
+.dashboard-feature-card__description {
   font-size: 14px;
   color: #6c757d;
   line-height: 1.5;
@@ -125,18 +139,19 @@
 }
 
 /* Alternative list style for smaller screens */
-.features-list {
+
+.dashboard-feature-list {
   display: none;
 }
 
-.features-list .br-list {
+.dashboard-feature-list__container {
   background: white;
   border-radius: 8px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   overflow: hidden;
 }
 
-.features-list .br-item {
+.dashboard-feature-list__item {
   padding: 20px 24px;
   border-bottom: 1px solid #e9ecef;
   display: flex;
@@ -147,104 +162,106 @@
   transition: background-color 0.2s ease;
 }
 
-.features-list .br-item:last-child {
+.dashboard-feature-list__item:last-child {
   border-bottom: none;
 }
 
-.features-list .br-item:hover {
+.dashboard-feature-list__item:hover {
   background-color: #f8f9fa;
   text-decoration: none;
   color: inherit;
 }
 
-.features-list .br-list-title {
+.dashboard-feature-list__icon {
   font-size: 24px;
   width: 40px;
   text-align: center;
   flex-shrink: 0;
 }
 
-.features-list .br-list-text {
+.dashboard-feature-list__text {
   font-size: 16px;
   font-weight: 500;
   color: #1351b4;
 }
 
 /* Logout button */
-.logout-section {
+
+.dashboard-logout {
   text-align: center;
   margin-top: 32px;
   padding-top: 32px;
   border-top: 1px solid #e9ecef;
 }
 
-.logout-button {
-  background: #6c757d;
+.dashboard-logout__button {
+  background: #1351b4;
   color: white;
   border: none;
   padding: 12px 24px;
-  border-radius: 4px;
+  border-radius: 20px;
   font-size: 16px;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
-.logout-button:hover {
+.dashboard-logout__button:hover {
   background: #5a6268;
   transform: translateY(-1px);
 }
 
 /* Responsive design */
+
 @media (max-width: 768px) {
   .dashboard-page {
     padding: 16px;
   }
 
-  .dashboard-content .card-content {
+  .dashboard-page__content .dashboard-card__content {
     padding: 24px;
   }
 
-  .welcome-section .text-h2 {
+  .dashboard-welcome__title {
     font-size: 2rem;
   }
 
-  .features-grid {
+  .dashboard-features {
     grid-template-columns: 1fr;
     gap: 16px;
   }
 
-  .features-list {
+  .dashboard-feature-list {
     display: block;
   }
 
-  .features-grid {
+  .dashboard-features {
     display: none;
   }
 
-  .feature-card {
+  .dashboard-feature-card {
     padding: 20px;
   }
 }
 
 @media (max-width: 480px) {
-  .dashboard-header .card-header {
+  .dashboard-page__header .dashboard-card__header {
     padding: 24px 16px;
   }
 
-  .dashboard-content .card-content {
+  .dashboard-page__content .dashboard-card__content {
     padding: 20px 16px;
   }
 
-  .welcome-section .text-h2 {
+  .dashboard-welcome__title {
     font-size: 1.75rem;
   }
 
-  .features-list .br-item {
+  .dashboard-feature-list__item {
     padding: 16px 20px;
   }
 
-  .features-list .br-list-title {
+  .dashboard-feature-list__icon {
     font-size: 20px;
   }
 }
