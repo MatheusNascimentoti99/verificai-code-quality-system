@@ -181,6 +181,7 @@ class GeneralAnalysisResult(Base, BaseModel, AuditMixin):
 
     # Analysis metadata
     analysis_name = Column(String(200), nullable=False)
+    project_name = Column(String(200), nullable=True)
     criteria_count = Column(Integer, nullable=False)
 
     # Foreign keys
@@ -238,6 +239,7 @@ class GeneralAnalysisResult(Base, BaseModel, AuditMixin):
         data['file_paths'] = self.get_file_paths()
         data['criteria_results'] = self.get_criteria_results()
         data['usage'] = self.get_usage()
+        data['project_name'] = self.project_name
         return data
 
     def __repr__(self) -> str:

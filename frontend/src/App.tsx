@@ -5,6 +5,8 @@ import LoginPage from '@/pages/LoginPage';
 import PromptConfigPage from '@/pages/PromptConfigPage';
 import CodeUploadPage from '@/pages/CodeUploadPage';
 import GeneralAnalysisPage from '@/pages/GeneralAnalysisPage';
+import GeneralAnalysisResultsPage from '@/pages/GeneralAnalysisResultsPage';
+import GeneralAnalysisResultDetailPage from '@/pages/GeneralAnalysisResultDetailPage';
 import ArchitecturalAnalysisPage from '@/pages/ArchitecturalAnalysisPage';
 import BusinessAnalysisPage from '@/pages/BusinessAnalysisPage';
 import DashboardPage from './pages/DashboardPage';
@@ -117,6 +119,41 @@ function App() {
           </ProtectedRoute>
         }
       />
+      <Route path="/prompt-config" element={
+        <ProtectedRoute>
+          <PromptConfigPage />
+        </ProtectedRoute>
+      } />
+      <Route path="/code-upload" element={
+        <ProtectedRoute>
+          <CodeUploadPage />
+        </ProtectedRoute>
+      } />
+      <Route path="/general-analysis/results/:resultId" element={
+        <ProtectedRoute>
+          <GeneralAnalysisResultDetailPage />
+        </ProtectedRoute>
+      } />
+      <Route path="/general-analysis/results" element={
+        <ProtectedRoute>
+          <GeneralAnalysisResultsPage />
+        </ProtectedRoute>
+      } />
+      <Route path="/general-analysis" element={
+        <ProtectedRoute>
+          <GeneralAnalysisPage />
+        </ProtectedRoute>
+      } />
+      <Route path="/architectural-analysis" element={
+        <ProtectedRoute>
+          <ArchitecturalAnalysisPage />
+        </ProtectedRoute>
+      } />
+      <Route path="/business-analysis" element={
+        <ProtectedRoute>
+          <BusinessAnalysisPage />
+        </ProtectedRoute>
+      } />
 
       {/* Login - acessível apenas se não estiver autenticado */}
       <Route

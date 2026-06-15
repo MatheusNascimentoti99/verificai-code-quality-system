@@ -14,7 +14,7 @@ from app.models.analysis import Analysis, AnalysisStatus
 from app.models.prompt import Prompt
 from app.core.config import settings
 from app.services.llm_provider import LLMProvider
-from app.services.file_processor import FileProcessor
+from app.services.file_processor import FileProcessorService
 from app.services.token_optimizer import TokenOptimizer
 from app.services.analysis_queue import AnalysisQueue
 
@@ -56,7 +56,7 @@ class AnalysisOrchestrator:
     def __init__(self):
         self.queue = AnalysisQueue()
         self.llm_provider = LLMProvider()
-        self.file_processor = FileProcessor()
+        self.file_processor = FileProcessorService()
         self.token_optimizer = TokenOptimizer()
         self.active_jobs: Dict[str, Analysis] = {}
 

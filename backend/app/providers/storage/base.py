@@ -37,7 +37,7 @@ class StorageProvider(ABC):
         candidate = relative_path or original_name
         safe_candidate = self._safe_name(candidate)
         safe_original = self._safe_name(original_name)
-        return f"uploads/user_{user_id}/{file_id}/{safe_candidate or safe_original}"
+        return f"user_{user_id}/{file_id}/{safe_candidate or safe_original}"
 
     @abstractmethod
     async def upload_bytes(

@@ -7,6 +7,7 @@ export interface AnalysisRequest {
   use_code_entry?: boolean;  // Novo parâmetro
   code_entry_id?: string;  // ID específico do code_entry (opcional)
   analysis_name?: string;
+  project_name?: string;
   temperature?: number;
   max_tokens?: number;
 }
@@ -14,6 +15,7 @@ export interface AnalysisRequest {
 export interface AnalysisResponse {
   success: boolean;
   analysis_name: string;
+  project_name?: string;
   criteria_count: number;
   timestamp: string;
   model_used: string;

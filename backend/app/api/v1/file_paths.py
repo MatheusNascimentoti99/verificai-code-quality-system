@@ -15,7 +15,7 @@ from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.user import User
 from app.models.file_path import FilePath
-from app.services.storage_provider import get_storage_provider
+from app.providers.storage import get_storage_provider
 from app.schemas.file_path import (
     FilePathCreate,
     FilePathResponse,

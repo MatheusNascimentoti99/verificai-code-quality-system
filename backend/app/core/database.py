@@ -156,6 +156,13 @@ def update_schema():
             except Exception as rename_e:
                 logger.warning(f"Could not rename type column: {rename_e}")
 
+            # Columns to add to 'general_analysis_results' table
+            try:
+                conn.execute(text("ALTER TABLE general_analysis_results ADD COLUMN IF NOT EXISTS project_name VARCHAR(200)"))
+                conn.commit()
+            except Exception as e:
+                logger.warning(f"Could not add project_name column: {e}")
+
     except Exception as e:
         logger.error(f"Error updating schema: {e}")
 

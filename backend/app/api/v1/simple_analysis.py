@@ -6,9 +6,10 @@ import os
 from app.core.database import get_db
 from app.models.prompt import PromptConfiguration
 from app.models.prompt import GeneralCriteria
-from app.services.prompt_service import PromptService
+from app.services.prompt import PromptService
 from app.services.llm_service import LLMService
 from app.schemas.analysis import AnalysisResponse
+from app.schemas.llm import StructuredAnalysisOutput
 
 # Configurar logging
 logging.basicConfig(level=logging.DEBUG)
@@ -23,15 +24,16 @@ async def simple_analyze(
 ):
     """Endpoint para análise simplificada com múltiplos critérios"""
     try:
-        logger.debug(f"Simple analysis started for criteria: {request.selected_criteria}")
+        request_data = request or {}
+        logger.debug(f"Simple analysis started for criteria: {request_data.get('selected_criteria', [])}")
 
         # Verificar se há critérios selecionados
-        if not request.selected_criteria:
+        if not request_data.get("selected_criteria"):
             raise HTTPException(status_code=400, detail="Nenhum critério selecionado")
 
         # Buscar critérios completos do banco de dados
         selected_criteria = db.query(GeneralCriteria).filter(
-            GeneralCriteria.id.in_(request.selected_criteria)
+            GeneralCriteria.id.in_(request_data.get("selected_criteria", []))
         ).all()
 
         if not selected_criteria:
@@ -40,7 +42,7 @@ async def simple_analyze(
         logger.debug(f"Found {len(selected_criteria)} criteria")
 
         # Ler código fonte - Removido caminho fixo C:\\Users\\formi\\...
-        source_code = request.get("source_code", "")
+        source_code = request_data.get("source_code", "")
         if not source_code:
             # Tentar ler de um local padrão ou relativo se necessário
             try:
@@ -75,8 +77,13 @@ async def simple_analyze(
 
         # Enviar para LLM
         try:
-            llm_response = llm_service.analyze_code(modified_prompt)
-            logger.debug(f"LLM response received: {len(llm_response)} characters")
+            llm_response = await llm_service.analyze_code(
+                modified_prompt,
+                response_model=StructuredAnalysisOutput
+            )
+            logger.debug(f"LLM response received: {len(llm_response.content)} characters")
+            if llm_response.structured_content:
+                logger.debug("Structured LLM response parsed successfully")
         except Exception as e:
             logger.error(f"Error calling LLM service: {e}")
             raise HTTPException(status_code=500, detail=f"Erro ao chamar serviço LLM: {str(e)}")
