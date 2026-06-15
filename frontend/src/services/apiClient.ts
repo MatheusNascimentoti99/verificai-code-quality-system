@@ -14,9 +14,9 @@ const apiClient = axios.create({
 });
 
 // Helper to check if backend is local
-export const isLocalBackend = 
-  API_BASE_URL.includes('localhost') || 
-  API_BASE_URL.includes('127.0.0.1') || 
+export const isLocalBackend =
+  API_BASE_URL.includes('localhost') ||
+  API_BASE_URL.includes('127.0.0.1') ||
   (typeof window !== 'undefined' && window.location.hostname === 'localhost');
 
 // Request interceptor
@@ -43,21 +43,21 @@ apiClient.interceptors.response.use(
     if (error.response?.status === 401) {
       // Handle unauthorized - clear auth store
       clearAuth();
-      if (typeof window !== 'undefined') {
-        window.location.href = '/login';
-      }
     }
 
     // Try to get the best possible message
-    let message = error.response?.data?.message || 
-                  error.response?.data?.detail || 
-                  error.message || 
-                  'Erro desconhecido na API';
+    let message =
+      error.response?.data?.message ||
+      error.response?.data?.detail ||
+      error.message ||
+      'Erro desconhecido na API';
 
     if (error.code === 'ECONNABORTED' && error.message.includes('timeout')) {
-      message = 'O servidor demorou muito para responder. Por favor, tente novamente.';
+      message =
+        'O servidor demorou muito para responder. Por favor, tente novamente.';
     } else if (error.code === 'ERR_NETWORK') {
-      message = 'Não foi possível conectar ao servidor. Verifique se o backend está online.';
+      message =
+        'Não foi possível conectar ao servidor. Verifique se o backend está online.';
     }
 
     // Transform error to consistent format that also works with alert() calls
