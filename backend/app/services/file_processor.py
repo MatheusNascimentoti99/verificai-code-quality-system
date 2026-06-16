@@ -227,6 +227,7 @@ class FileProcessorService:
         if not request_data.file_paths:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No file paths provided")
 
+        MAX_CHARS_FREE_TIER = 800000
         for source_file_path in request_data.file_paths:
             actual_file_path = source_file_path
             try:
@@ -242,6 +243,12 @@ class FileProcessorService:
                 source_info += f"{'='*60}\n\n"
                 all_source_code += file_content
                 total_files_processed += 1
+                
+                if len(all_source_code) > MAX_CHARS_FREE_TIER:
+                    logger.warning(f"Atingido limite de cota gratuita ({MAX_CHARS_FREE_TIER} chars). Omitindo os arquivos restantes.")
+                    source_info += "\n\n[AVISO DE TRUNCAMENTO]\n"
+                    source_info += "Muitos arquivos enviados. O processamento foi interrompido aqui para não exceder o limite da API (250k tokens).\n"
+                    break
             except Exception as file_error:
                 print(f"❌ DEBUG: Error processing file {source_file_path} (actual: {actual_file_path}): {file_error}")
                 continue
@@ -258,6 +265,87 @@ class FileProcessorService:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail_msg)
 
         return all_source_code, source_info, total_files_processed
+
+    async def build_source_batches(self, request_data, current_user, max_chars_per_batch=800000) -> List[Tuple[str, str, int]]:
+        """Collect source code into batches to avoid hitting token limits."""
+        batches = []
+        all_source_code = ""
+        source_info = ""
+        total_files_processed = 0
+
+        is_using_files = len(request_data.file_paths) > 0
+
+        if not is_using_files and request_data.use_code_entry:
+            code_entry = self._get_code_entry(request_data.code_entry_id, current_user.id)
+            if not code_entry:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Nenhum código encontrado na tabela de colagem. Por favor, cole um código na página de colagem primeiro.",
+                )
+
+            all_source_code = code_entry.code_content or ""
+            file_size = len(all_source_code)
+            source_info = (
+                f"\n\n{'='*60}\n"
+                f"CÓDIGO COLADO: {code_entry.title}\n"
+                f"DESCRIÇÃO: {code_entry.description or 'Sem descrição'}\n"
+                f"LINGUAGEM: {code_entry.language or 'Não detectada'}\n"
+                f"TAMANHO: {file_size} caracteres\n"
+                f"LINHAS: {code_entry.lines_count}\n"
+                f"CRIADO EM: {code_entry.created_at}\n"
+                f"{'='*60}\n\n"
+            )
+            # Just one block since it's a code entry (we assume code entries fit in limits)
+            return [(all_source_code, source_info, 1)]
+
+        if not request_data.file_paths:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No file paths provided")
+
+        for source_file_path in request_data.file_paths:
+            actual_file_path = source_file_path
+            try:
+                actual_file_path = self.resolve_uploaded_file_path(source_file_path, current_user.id)
+                file_content = await self.storage_provider.read_text(actual_file_path)
+                file_size = len(file_content)
+                file_extension = source_file_path.split('.')[-1] if '.' in source_file_path else 'txt'
+
+                file_info = f"\n\n{'='*60}\n"
+                file_info += f"ARQUIVO: {source_file_path}\n"
+                file_info += f"TAMANHO: {file_size} caracteres\n"
+                file_info += f"TIPO: {file_extension.upper()}\n"
+                file_info += f"{'='*60}\n\n"
+                
+                # Check if adding this file exceeds the batch limit
+                if len(all_source_code) + file_size > max_chars_per_batch and total_files_processed > 0:
+                    batches.append((all_source_code, source_info, total_files_processed))
+                    all_source_code = ""
+                    source_info = ""
+                    total_files_processed = 0
+
+                all_source_code += file_content
+                source_info += file_info
+                total_files_processed += 1
+                
+            except Exception as file_error:
+                print(f"❌ DEBUG: Error processing file {source_file_path} (actual: {actual_file_path}): {file_error}")
+                continue
+
+        # Add the last batch if it has content
+        if total_files_processed > 0:
+            batches.append((all_source_code, source_info, total_files_processed))
+
+        if not batches:
+            is_cloud = "render" in os.environ.get("HOSTNAME", "").lower() or "vercel" in os.environ.get("HOSTNAME", "").lower()
+            detail_msg = "Nenhum código pôde ser lido para análise. O arquivo não existe no disco."
+            if is_cloud:
+                detail_msg += " Devido ao ambiente cloud (Render/Vercel), arquivos locais são perdidos após o restart. Por favor, remova caminhos antigos ou use a 'Colagem de Código'."
+            else:
+                file_previews = request_data.file_paths[:3] if request_data.file_paths else []
+                detail_msg += f" Verifique se os diretórios {file_previews}... existem."
+
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail_msg)
+
+        return batches
 
     async def process_files(self, file_paths: List[str]) -> List[ProcessedFile]:
         """Process multiple files for analysis."""
