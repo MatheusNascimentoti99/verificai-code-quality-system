@@ -17,7 +17,7 @@ from app.core.middleware import (
     ErrorHandlerMiddleware,
     RateLimitMiddleware
 )
-from app.api.v1 import auth, users, prompts, analysis, upload, file_paths, general_analysis, simple_analysis, code_entries
+from app.api.v1 import auth, users, prompts, analysis, upload, file_paths, general_analysis, simple_analysis, code_entries, architectural_analysis
 import uvicorn
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -34,6 +34,7 @@ from app.models.analysis import Analysis, AnalysisResult # noqa: F401
 from app.models.prompt import Prompt, PromptConfiguration, GeneralCriteria, GeneralAnalysisResult # noqa: F401
 from app.models.uploaded_file import UploadedFile # noqa: F401
 from app.models.file_path import FilePath # noqa: F401
+from app.models.architectural import ArchitecturalDoc, ArchitecturalCriteria, ArchitecturalAnalysisResult # noqa: F401
 
 # Create FastAPI application
 app = FastAPI(
@@ -81,6 +82,7 @@ app.include_router(analysis.router, prefix=settings.API_V1_STR, tags=["analysis"
 app.include_router(upload.router, prefix=settings.API_V1_STR, tags=["upload"])
 app.include_router(general_analysis.router, prefix=settings.API_V1_STR + "/general-analysis", tags=["general_analysis"])
 app.include_router(simple_analysis.router, prefix=settings.API_V1_STR + "/simple-analysis", tags=["simple_analysis"])
+app.include_router(architectural_analysis.router, prefix=settings.API_V1_STR + "/architectural-analysis", tags=["architectural_analysis"])
 
 
 @app.on_event("startup")

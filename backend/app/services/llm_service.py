@@ -74,9 +74,21 @@ class LLMService:
                 "messages": [{"role": "user", "content": self._build_structured_prompt(prompt, response_model)}],
                 "max_tokens": max_output_tokens,
                 "temperature": temperature,
-                "response_format": response_model.get_response_schema(),
-                "structured_outputs": True
             }
+            if response_model:
+                schema_method = getattr(response_model, "get_response_schema", None)
+                if schema_method:
+                    payload["response_format"] = schema_method()
+                else:
+                    schema_builder = getattr(response_model, "model_json_schema", None) or getattr(response_model, "schema", None)
+                    if schema_builder:
+                         payload["response_format"] = {
+                            "type": "json_schema",
+                            "json_schema": {
+                                "name": "response_schema",
+                                "schema": schema_builder()
+                            }
+                        }
         else:
             headers = {"Content-Type": "application/json"}
             payload = {
@@ -96,6 +108,8 @@ class LLMService:
                     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
                 ]
             }
+            
+        print(f"=== Sending prompt to {self.provider} ({self.primary_model}) | Length: {len(prompt)} chars ===")
 
         max_retries = 2
         base_delay = 2
@@ -126,9 +140,20 @@ class LLMService:
                     if response.status_code == 200:
                         return {"result": response.json(), "model": model}
                     elif response.status_code == 429:
+                        print(f"LLM API returned 429: {response.text}")
                         await asyncio.sleep(base_delay * 5)
                     elif response.status_code == 503:
                         pass
+                    elif response.status_code == 400:
+                        error_data = response.json() if "application/json" in response.headers.get("Content-Type", "") else response.text
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Erro da API de IA (400): {error_data}"
+                        )
+                    else:
+                        print(f"LLM API returned {response.status_code}: {response.text}")
+            except HTTPException:
+                raise
             except Exception as e:
                 print(f"Error trying model {model}: {e}")
             
