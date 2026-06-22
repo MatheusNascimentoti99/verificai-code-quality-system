@@ -17,6 +17,7 @@ from app.services.prompt import PromptService, get_prompt_service as build_promp
 from app.providers.storage import StorageProvider, get_storage_provider as build_storage_provider
 from app.services.file_processor import FileProcessorService
 from app.services.llm_orchestrator import LLMOrchestrator
+from app.services.architectural_analysis import ArchitecturalAnalysisService
 
 # Security schemes
 security = HTTPBearer()
@@ -187,4 +188,18 @@ def get_general_analysis_service(
         llm_service=llm_service_instance,
         file_processor=file_processor,
         llm_orchestrator=llm_orchestrator,
+    )
+
+
+def get_architectural_analysis_service(
+    db: Session = Depends(get_db),
+    storage_provider: StorageProvider = Depends(get_storage_provider),
+    llm_service_instance=Depends(get_llm_service),
+    file_processor: FileProcessorService = Depends(get_file_processor),
+) -> ArchitecturalAnalysisService:
+    """Provide the architectural analysis service with its dependencies."""
+    return ArchitecturalAnalysisService(
+        db=db,
+        file_processor=file_processor,
+        llm_service=llm_service_instance,
     )

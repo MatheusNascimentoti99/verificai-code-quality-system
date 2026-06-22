@@ -70,6 +70,9 @@ class User(Base, BaseModel, AuditMixin):
     general_criteria = relationship("GeneralCriteria", back_populates="user", cascade="all, delete-orphan")
     general_analysis_results = relationship("GeneralAnalysisResult", back_populates="user", cascade="all, delete-orphan")
     code_entries = relationship("CodeEntry", back_populates="user", cascade="all, delete-orphan")
+    architectural_docs = relationship("ArchitecturalDoc", back_populates="user", cascade="all, delete-orphan")
+    architectural_criteria = relationship("ArchitecturalCriteria", back_populates="user", cascade="all, delete-orphan")
+    architectural_analysis_results = relationship("ArchitecturalAnalysisResult", back_populates="user", cascade="all, delete-orphan")
 
     def __init__(self, **kwargs):
         """Initialize user with password hashing"""

@@ -124,6 +124,7 @@ def setup_logging() -> None:
     if settings.ENVIRONMENT == "development":
         log_dir = Path("logs")
         log_dir.mkdir(exist_ok=True)
+        log_config["loggers"][""]["handlers"].append("file")
         log_config["handlers"]["file"] = {
             "class": "logging.handlers.RotatingFileHandler",
             "level": settings.LOG_LEVEL,

@@ -19,6 +19,7 @@ from app.models.analysis import Analysis, AnalysisResult
 from app.models.uploaded_file import UploadedFile
 from app.models.file_path import FilePath
 from app.models.code_entry import CodeEntry
+from app.models.architectural import ArchitecturalDoc, ArchitecturalCriteria, ArchitecturalAnalysisResult  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +117,17 @@ def update_schema():
     """Attempt to add new columns to existing tables (self-healing)"""
     try:
         with engine.connect() as conn:
+            is_sqlite = engine.dialect.name == "sqlite"
+            
+            def column_exists(table_name, column_name):
+                if is_sqlite:
+                    res = conn.execute(text(f"PRAGMA table_info({table_name})"))
+                    columns = [row[1] for row in res.fetchall()]
+                    return column_name in columns
+                else:
+                    res = conn.execute(text(f"SELECT column_name FROM information_schema.columns WHERE table_name='{table_name}' AND column_name='{column_name}'"))
+                    return res.first() is not None
+
             # Columns to add to 'prompts' table
             prompt_columns = [
                 ("name", "VARCHAR(200) DEFAULT 'Novo Prompt'"),
@@ -139,22 +151,30 @@ def update_schema():
             
             for col_name, col_type in prompt_columns:
                 try:
-                    conn.execute(text(f"ALTER TABLE prompts ADD COLUMN IF NOT EXISTS {col_name} {col_type}"))
-                    conn.commit()
+                    if not column_exists('prompts', col_name):
+                        conn.execute(text(f"ALTER TABLE prompts ADD COLUMN {col_name} {col_type}"))
+                        conn.commit()
                 except Exception as col_e:
                     logger.warning(f"Could not add column {col_name}: {col_e}")
 
             # Special case: rename 'type' to 'prompt_type' if 'prompt_type' doesn't exist
             try:
-                # Check if prompt_type exists
-                res = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='prompts' AND column_name='prompt_type'"))
-                if not res.first():
+                if not column_exists('prompts', 'prompt_type'):
                     # If prompt_type doesn't exist, try to rename type
-                    conn.execute(text("ALTER TABLE prompts RENAME COLUMN type TO prompt_type"))
-                    conn.commit()
-                    logger.info("Renamed column 'type' to 'prompt_type' in prompts table")
+                    if column_exists('prompts', 'type'):
+                        conn.execute(text("ALTER TABLE prompts RENAME COLUMN type TO prompt_type"))
+                        conn.commit()
+                        logger.info("Renamed column 'type' to 'prompt_type' in prompts table")
             except Exception as rename_e:
                 logger.warning(f"Could not rename type column: {rename_e}")
+
+            # Columns to add to 'general_analysis_results' table
+            try:
+                if not column_exists('general_analysis_results', 'project_name'):
+                    conn.execute(text("ALTER TABLE general_analysis_results ADD COLUMN project_name VARCHAR(200)"))
+                    conn.commit()
+            except Exception as e:
+                logger.warning(f"Could not add project_name column: {e}")
 
     except Exception as e:
         logger.error(f"Error updating schema: {e}")

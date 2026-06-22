@@ -9,9 +9,13 @@ import httpx
 import asyncio
 import time
 import datetime
+import logging
 from typing import Dict, List, Any, Optional, Type
 from fastapi import HTTPException, status
 from pydantic import BaseModel, ValidationError
+from app.schemas.llm import BaseResponseModel
+
+logger = logging.getLogger(__name__)
 
 # Use relative import for robustness
 try:
@@ -34,9 +38,7 @@ class LLMService:
         else:
             self.base_url = "https://generativelanguage.googleapis.com/v1beta/models"
             self.primary_model = settings.MODEL if "gemini" in settings.MODEL else "gemini-1.5-flash"
-            
-        self.fallback_model = "gemini-1.5-pro" if self.provider == "gemini" else "anthropic/claude-3-haiku"
-        
+                    
         # Lock global para serializar completamente todas as solicitações LLM
         self._global_lock = asyncio.Lock()
         
@@ -60,8 +62,6 @@ class LLMService:
         temperature = kwargs.get("temperature", 0.7)
         response_model = kwargs.get("response_model")
 
-        prompt_with_schema = self._build_structured_prompt(prompt, response_model)
-
         if self.provider == "openrouter":
             headers = {
                 "Authorization": f"Bearer {self.api_key}",
@@ -71,15 +71,36 @@ class LLMService:
             }
             payload = {
                 "model": self.primary_model,
-                "messages": [{"role": "user", "content": prompt_with_schema}],
+                "messages": [{"role": "user", "content": self._build_structured_prompt(prompt, response_model)}],
                 "max_tokens": max_output_tokens,
-                "temperature": temperature
+                "temperature": temperature,
             }
+            if response_model:
+                schema_method = getattr(response_model, "get_response_schema", None)
+                if schema_method:
+                    payload["response_format"] = schema_method()
+                else:
+                    schema_builder = getattr(response_model, "model_json_schema", None) or getattr(response_model, "schema", None)
+                    if schema_builder:
+                         payload["response_format"] = {
+                            "type": "json_schema",
+                            "json_schema": {
+                                "name": "response_schema",
+                                "schema": schema_builder()
+                            }
+                        }
         else:
             headers = {"Content-Type": "application/json"}
             payload = {
-                "contents": [{"role": "user", "parts": [{"text": prompt_with_schema}]}],
-                "generationConfig": {"maxOutputTokens": max_output_tokens, "temperature": temperature},
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "maxOutputTokens": max_output_tokens,
+                    "temperature": temperature,
+                    **({
+                        "_responseJsonSchema": response_model.get_response_schema(),
+                        "responseMimeType": "application/json"
+                    } if response_model else {})
+                },
                 "safetySettings": [
                     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
                     {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -87,6 +108,8 @@ class LLMService:
                     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
                 ]
             }
+            
+        print(f"=== Sending prompt to {self.provider} ({self.primary_model}) | Length: {len(prompt)} chars ===")
 
         max_retries = 2
         base_delay = 2
@@ -96,16 +119,6 @@ class LLMService:
 
         if primary_result:
             return self._process_successful_response(primary_result["result"], primary_result["model"], response_model)
-        
-        # Try fallback
-        fallback_model = self.fallback_model
-        if self.provider == "openrouter":
-            payload["model"] = fallback_model
-        
-        fallback_result = await self._try_model(prompt, fallback_model, headers, payload, max_retries, base_delay)
-
-        if fallback_result:
-            return self._process_successful_response(fallback_result["result"], fallback_result["model"], response_model)
         
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -127,9 +140,20 @@ class LLMService:
                     if response.status_code == 200:
                         return {"result": response.json(), "model": model}
                     elif response.status_code == 429:
+                        print(f"LLM API returned 429: {response.text}")
                         await asyncio.sleep(base_delay * 5)
                     elif response.status_code == 503:
                         pass
+                    elif response.status_code == 400:
+                        error_data = response.json() if "application/json" in response.headers.get("Content-Type", "") else response.text
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Erro da API de IA (400): {error_data}"
+                        )
+                    else:
+                        print(f"LLM API returned {response.status_code}: {response.text}")
+            except HTTPException:
+                raise
             except Exception as e:
                 print(f"Error trying model {model}: {e}")
             
