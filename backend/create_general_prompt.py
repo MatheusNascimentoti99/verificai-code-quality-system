@@ -85,7 +85,7 @@ Forneça sua análise em um formato estruturado que inclua:
 - Exemplos de código que apoiam suas conclusões
 - Recomendações acionáveis
 
-Formate sua resposta em markdown com a seguinte estrutura exata:
+Formate sua resposta com a seguinte estrutura:
 
 ## Avaliação Geral
 [Resumo geral da análise com pontos fortes e fracos do código]
@@ -120,8 +120,7 @@ IMPORTANTE:
 2. Inclua números de linhas ou trechos específicos como evidências
 3. Para cada critério, avalie de forma independente e justificada
 4. Ao finalizar sua análise, inclua exatamente a tag #FIM# para indicar que a resposta está completa.
-
-#FIM#"""
+"""
 
 if __name__ == "__main__":
     create_general_analysis_prompt()

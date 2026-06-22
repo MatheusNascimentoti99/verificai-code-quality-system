@@ -78,11 +78,17 @@ class LLMService:
             if response_model:
                 schema_method = getattr(response_model, "get_response_schema", None)
                 if schema_method:
-                    payload["response_format"] = schema_method()
+                    payload["response_format"] = {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": "response_schema",
+                            "schema": schema_method()
+                        }
+                    }
                 else:
                     schema_builder = getattr(response_model, "model_json_schema", None) or getattr(response_model, "schema", None)
                     if schema_builder:
-                         payload["response_format"] = {
+                        payload["response_format"] = {
                             "type": "json_schema",
                             "json_schema": {
                                 "name": "response_schema",
@@ -97,7 +103,7 @@ class LLMService:
                     "maxOutputTokens": max_output_tokens,
                     "temperature": temperature,
                     **({
-                        "_responseJsonSchema": response_model.get_response_schema(),
+                        "responseJsonSchema": response_model.get_response_schema(),
                         "responseMimeType": "application/json"
                     } if response_model else {})
                 },

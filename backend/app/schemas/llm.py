@@ -44,12 +44,12 @@ class StructuredAnalysisOutput(BaseResponseModel):
 
     overall_assessment: str = Field(..., description="Overall assessment")
     detailed_findings: str = Field(default="", description="Detailed findings")
-    criteria_results: List[StructuredCriterionResult] = Field(default_factory=list)
-    code_examples: List[Dict[str, Any]] = Field(default_factory=list)
-    recommendations: List[str] = Field(default_factory=list)
-    confidence: float = Field(default=0.8, ge=0.0, le=1.0)
-    metrics: Dict[str, Any] = Field(default_factory=dict)
-    file_analysis: Dict[str, Any] = Field(default_factory=dict)
+    criteria_results: List[StructuredCriterionResult] = Field(default_factory=list, description="List of structured results for each criterion")
+    code_examples: List[Dict[str, Any]] = Field(default_factory=list, description="List of code examples")
+    recommendations: List[str] = Field(default_factory=list, description="List of recommendations")
+    confidence: float = Field(default=0.8, ge=0.0, le=1.0, description="Confidence score")
+    metrics: Dict[str, Any] = Field(default_factory=dict, description="Analysis metrics")
+    file_analysis: Dict[str, Any] = Field(default_factory=dict, description="File analysis details")
 
     @classmethod
     def get_response_schema(cls) -> dict:
