@@ -25,7 +25,8 @@ DEFAULT_CRITERIA = [
     "Validação de Entradas: Verificar se os pontos de entrada da aplicação que recebem dados, especialmente arquivos, possuem validações, filtros de tipo e limites de tamanho para mitigar riscos de segurança. Analisar se objetos de transferência de dados (DTOs) são utilizados com bibliotecas de validação para garantir a integridade e o formato dos dados.",
     "Acesso a Recursos do Sistema: Inspecionar o código que interage com o sistema de arquivos para identificar o uso de entradas do usuário na construção de caminhos, o que pode levar a vulnerabilidades de acesso indevido a arquivos (Path Traversal).",
     "Tratamento de Erros: Sinalizar blocos de captura de exceção vazios ou que apenas registram o erro sem um tratamento adequado, pois eles podem ocultar falhas críticas de segurança ou de lógica de negócio.",
-    "Consistência de Contratos de API: Analisar as saídas da aplicação para detectar rotas que retornam tipos de dados inconsistentes dependendo do fluxo de execução, o que viola o contrato da API e pode causar falhas em sistemas clientes."
+    "Consistência de Contratos de API: Analisar as saídas da aplicação para detectar rotas que retornam tipos de dados inconsistentes dependendo do fluxo de execução, o que viola o contrato da API e pode causar falhas em sistemas clientes.",
+    "Potenciais Vulnerabilidades de Segurança: Identificar implementações, fluxos ou configurações que possam introduzir brechas de segurança, permitindo acesso não autorizado, exposição de informações, manipulação indevida de dados, execução de operações não previstas ou comprometimento da integridade, confidencialidade e disponibilidade da aplicação. Avaliar se os controles de segurança são adequados aos riscos envolvidos e aplicados de forma consistente."
 ]
 
 def seed_criteria():
